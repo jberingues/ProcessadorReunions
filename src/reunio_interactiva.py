@@ -25,17 +25,44 @@ class ReunioInteractiva:
         print(f"{Fore.GREEN}✓ Sistema inicialitzat\n")
     
     def run(self):
+        while True:
+            opcio = self._main_menu()
+            if opcio == 1:
+                self._flux_transcripcions()
+            elif opcio == 2:
+                print(f"{Fore.YELLOW}Pròximament\n")
+            else:
+                break
+
+    def _main_menu(self):
+        print(f"{Fore.CYAN}  1. Entrar transcripcions")
+        print(f"{Fore.CYAN}  2. Processar reunions\n")
+        try:
+            opcio = int(input(f"{Fore.WHITE}Opció (1-2): "))
+            if 1 <= opcio <= 2:
+                print()
+                return opcio
+        except ValueError:
+            pass
+        return None
+
+    def _flux_transcripcions(self):
         reunions = self._list_meetings()
-        if not reunions: return
-        
-        sel = self._select(reunions)
-        if not sel: return
-        
-        trans = self._get_transcript()
-        if not trans: return
-        
-        self._save(sel, trans)
-    
+        if not reunions:
+            return
+        while True:
+            sel = self._select(reunions)
+            if not sel:
+                return
+            trans = self._get_transcript()
+            if not trans:
+                return
+            self._save(sel, trans)
+            altra = input(f"{Fore.CYAN}Entrar una altra transcripció? (s/n): ").strip().lower()
+            print()
+            if altra != 's':
+                break
+
     def _list_meetings(self):
         now = datetime.now()
         past = now - timedelta(days=7)
@@ -65,11 +92,15 @@ class ReunioInteractiva:
     
     def _select(self, reunions):
         try:
-            num = int(input(f"{Fore.CYAN}Reunió (1-{len(reunions)}): "))
+            val = input(f"{Fore.CYAN}Reunió (1-{len(reunions)}, q per tornar): ").strip()
+            if val.lower() == 'q':
+                return None
+            num = int(val)
             if 1 <= num <= len(reunions):
                 print(f"{Fore.GREEN}✓ {reunions[num-1]['title']}\n")
                 return reunions[num-1]
-        except: pass
+        except ValueError:
+            pass
         return None
     
     def _get_transcript(self):
