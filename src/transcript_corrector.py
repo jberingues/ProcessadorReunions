@@ -1,14 +1,15 @@
-import json
+import os
 import re
 from pathlib import Path
 from crewai import Agent, Task, Crew, LLM
+from json_repair import repair_json
 
 
 class TranscriptCorrector:
-    def __init__(self, vocab: dict, memorized_path: Path = None, model: str = LLM_MODEL):
+    def __init__(self, vocab: dict, memorized_path: Path = None, model: str = None):
         self.vocab = vocab
         self.memorized_path = Path(memorized_path) if memorized_path else None
-        self.llm = LLM(model=model)
+        self.llm = LLM(model=model or os.getenv('LLM_MODELH'), drop_params=True)
 
     def correct(self, transcript: str) -> str:
         # 1. Aplicar correccions memoritzades automàticament
@@ -61,13 +62,14 @@ Si no hi ha errors, retorna [].
         )
 
         crew = Crew(agents=[agent], tasks=[task], verbose=False)
+        print("  → Agent corrector iniciat...")
         result = crew.kickoff()
+        print("  ✓ Agent corrector finalitzat\n")
 
-        try:
-            corrections = json.loads(result.raw)
-        except (json.JSONDecodeError, AttributeError):
-            match = re.search(r'\[.*\]', result.raw if hasattr(result, 'raw') else str(result), re.DOTALL)
-            corrections = json.loads(match.group()) if match else []
+        raw = result.raw if hasattr(result, 'raw') else str(result)
+        corrections = repair_json(raw, return_objects=True) or []
+        if not isinstance(corrections, list):
+            corrections = []
 
         # 3. Revisió interactiva dels nous errors detectats
         return self._apply_interactively(transcript, corrections)

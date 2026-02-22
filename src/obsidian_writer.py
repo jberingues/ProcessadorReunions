@@ -43,6 +43,8 @@ class ObsidianWriter:
         for p in (self.vault / 'Reunions').rglob('*.md'):
             if 'zConfig' in p.parts:
                 continue
+            if p.parent.name != 'Reunions':
+                continue
             if not p.stem.endswith('*'):
                 parts = p.stem.split('_', 1)
                 date_str = parts[0] if len(parts[0]) == 6 else ''

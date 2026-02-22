@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import os, sys
+import litellm
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from colorama import Fore, init
@@ -7,6 +8,17 @@ from calendar_matcher import CalendarMatcher
 from obsidian_writer import ObsidianWriter
 from vocabulary_loader import VocabularyLoader
 from transcript_corrector import TranscriptCorrector
+
+litellm.drop_params = True
+
+# Patch CrewAI LLM per eliminar el paràmetre 'stop' que alguns models no suporten
+from crewai import LLM as CrewLLM
+_orig_prepare = CrewLLM._prepare_completion_params
+def _patched_prepare(self, messages, tools=None):
+    params = _orig_prepare(self, messages, tools)
+    params.pop('stop', None)
+    return params
+CrewLLM._prepare_completion_params = _patched_prepare
 
 init(autoreset=True)
 
@@ -33,15 +45,16 @@ class ReunioInteractiva:
                 self._flux_transcripcions()
             elif opcio == 2:
                 self._flux_processar()
-            else:
+            elif opcio == 3:
                 break
 
     def _main_menu(self):
         print(f"{Fore.CYAN}  1. Entrar transcripcions")
-        print(f"{Fore.CYAN}  2. Processar reunions\n")
+        print(f"{Fore.CYAN}  2. Processar reunions")
+        print(f"{Fore.CYAN}  3. Sortir\n")
         try:
-            opcio = int(input(f"{Fore.WHITE}Opció (1-2): "))
-            if 1 <= opcio <= 2:
+            opcio = int(input(f"{Fore.WHITE}Opció (1-3): "))
+            if 1 <= opcio <= 3:
                 print()
                 return opcio
         except ValueError:
@@ -185,8 +198,46 @@ class ReunioInteractiva:
         new_transcript = corrector.correct(transcript)
 
         self.obsidian.update_transcript(note['path'], new_transcript)
-        new_path = self.obsidian.mark_as_processed(note['path'])
-        print(f"{Fore.GREEN}✓ Nota processada: {new_path.name}\n")
+
+        # Si és una reunió de Seguiment, analitzar temes
+        mark_processed = True
+        if 'Seguiment' in note['path'].parts:
+            estat_path = note['path'].parent.parent / 'Estat actual.md'
+            if estat_path.exists():
+                from meeting_analyzer import MeetingAnalyzer, StateFileUpdater, parse_active_topics
+                topics = parse_active_topics(estat_path)
+                if topics:
+                    print(f"{Fore.CYAN}Analitzant temes de seguiment...\n")
+                    analyzer = MeetingAnalyzer()
+                    result = analyzer.analyze(topics, new_transcript)
+
+                    # Mostrar resultat
+                    if result.updated_topics:
+                        print(f"{Fore.GREEN}Temes tractats:\n")
+                        for t in result.updated_topics:
+                            print(f"  {Fore.CYAN}{t.topic_name}")
+                            print(f"  {Fore.WHITE}{t.summary}\n")
+                    if result.new_other_topics:
+                        print(f"{Fore.GREEN}Nous temes:\n")
+                        for t in result.new_other_topics:
+                            print(f"  {Fore.CYAN}- {t}")
+                        print()
+                    if not result.updated_topics and not result.new_other_topics:
+                        print(f"{Fore.YELLOW}Cap tema tractat.\n")
+
+                    conf = input(f"{Fore.CYAN}Actualitzar Estat actual.md? (s/n): ").strip().lower()
+                    print()
+                    if conf == 's':
+                        updater = StateFileUpdater()
+                        updater.update(estat_path, result, note['date'])
+                        print(f"{Fore.GREEN}✓ Estat actual actualitzat\n")
+                    else:
+                        mark_processed = False
+                        print(f"{Fore.YELLOW}Estat actual no actualitzat. La nota no es marcarà com a processada.\n")
+
+        if mark_processed:
+            new_path = self.obsidian.mark_as_processed(note['path'])
+            print(f"{Fore.GREEN}✓ Nota processada: {new_path.name}\n")
 
 if __name__ == "__main__":
     try:
