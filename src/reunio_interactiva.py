@@ -16,16 +16,16 @@ class ReunioInteractiva:
         print(f"\n{Fore.CYAN}{'='*60}")
         print(f"{Fore.CYAN}  PROCESSADOR DE REUNIONS")
         print(f"{Fore.CYAN}{'='*60}\n")
-        
+
         vault = os.getenv('OBSIDIAN_VAULT_PATH')
         if not vault:
             print(f"{Fore.RED}OBSIDIAN_VAULT_PATH no configurat al .env")
             sys.exit(1)
-        
+
         self.calendar = CalendarMatcher()
         self.obsidian = ObsidianWriter(vault)
         print(f"{Fore.GREEN}✓ Sistema inicialitzat\n")
-    
+
     def run(self):
         while True:
             opcio = self._main_menu()
@@ -56,19 +56,45 @@ class ReunioInteractiva:
             sel = self._select(reunions)
             if not sel:
                 return
+            type_folder = self._select_type()
+            if not type_folder:
+                return
             trans = self._get_transcript()
             if not trans:
                 return
-            self._save(sel, trans)
+            self._save(sel, trans, type_folder)
             altra = input(f"{Fore.CYAN}Entrar una altra transcripció? (s/n): ").strip().lower()
             print()
             if altra != 's':
                 break
 
+    def _select_type(self):
+        types = self.obsidian.find_meeting_types()
+        if not types:
+            print(f"{Fore.YELLOW}No hi ha carpetes de tipus de reunió\n")
+            return None
+
+        print(f"{Fore.GREEN}Tipus de reunió:\n")
+        for i, t in enumerate(types, 1):
+            print(f"{i:2d}. {Fore.CYAN}{t}")
+        print()
+
+        val = input(f"{Fore.CYAN}Tipus (1-{len(types)}, q per tornar): ").strip()
+        if val.lower() == 'q':
+            return None
+        try:
+            num = int(val)
+            if 1 <= num <= len(types):
+                print(f"{Fore.GREEN}✓ {types[num-1]}\n")
+                return types[num-1]
+        except ValueError:
+            pass
+        return None
+
     def _list_meetings(self):
         now = datetime.now()
         past = now - timedelta(days=7)
-        
+
         events = self.calendar.service.events().list(
             calendarId='primary',
             timeMin=past.isoformat() + 'Z',
@@ -76,13 +102,13 @@ class ReunioInteractiva:
             singleEvents=True,
             orderBy='startTime'
         ).execute().get('items', [])
-        
+
         reunions = [self.calendar._parse_event(e) for e in events if 'attendees' in e]
-        
+
         if not reunions:
             print(f"{Fore.YELLOW}No hi ha reunions recents")
             return []
-        
+
         print(f"{Fore.GREEN}Reunions:\n")
         for i, r in enumerate(reunions, 1):
             data = r['start'].strftime('%d/%m/%Y %H:%M')
@@ -91,7 +117,7 @@ class ReunioInteractiva:
             print(f"     {Fore.YELLOW}{', '.join(noms)}")
         print()
         return reunions
-    
+
     def _select(self, reunions):
         try:
             val = input(f"{Fore.CYAN}Reunió (1-{len(reunions)}, q per tornar): ").strip()
@@ -104,7 +130,7 @@ class ReunioInteractiva:
         except ValueError:
             pass
         return None
-    
+
     def _get_transcript(self):
         print(f"{Fore.CYAN}Enganxa transcripció (Ctrl+D per acabar):\n")
         try:
@@ -118,9 +144,9 @@ class ReunioInteractiva:
                 return text
         except: pass
         return None
-    
-    def _save(self, reunio, trans):
-        if self.obsidian.create_meeting_note(reunio, trans):
+
+    def _save(self, reunio, trans, type_folder):
+        if self.obsidian.create_meeting_note(reunio, trans, type_folder):
             print(f"{Fore.GREEN}✓ Nota guardada a Obsidian!\n")
         else:
             print(f"{Fore.RED}✗ Error guardant\n")

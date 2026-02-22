@@ -6,22 +6,37 @@ class ObsidianWriter:
         self.vault = Path(vault_path).expanduser()
         if not self.vault.exists():
             raise FileNotFoundError(f"Vault no trobat: {self.vault}")
-    
-    def create_meeting_note(self, meeting, transcripcio):
-        path = self._gen_path(meeting)
+
+    def create_meeting_note(self, meeting, transcripcio, type_folder):
+        path = self._gen_path(meeting, type_folder)
         content = self._gen_content(meeting, transcripcio)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding='utf-8')
+
+        if type_folder == 'Seguiment':
+            meeting_dir = path.parent.parent
+            for nom_nota in ['Estat actual', 'Històric']:
+                nota_path = meeting_dir / f"{nom_nota}.md"
+                if not nota_path.exists():
+                    nota_path.write_text(f"# {nom_nota}\n\n", encoding='utf-8')
+
         return True
-    
-    def _gen_path(self, m):
+
+    def _gen_path(self, m, type_folder):
         nom = self._clean(m['title'])
         data = m['start'].strftime('%y%m%d')
-        return self.vault / 'Reunions' / nom / f"{data}_{nom}.md"
-    
+        return self.vault / 'Reunions' / type_folder / nom / 'Reunions' / f"{data}_{nom}.md"
+
     def _clean(self, s):
         for c in '<>:"/\\|?*': s = s.replace(c, '')
         return ' '.join(s.split()).replace(' ', '_')
+
+    def find_meeting_types(self) -> list:
+        reunions_dir = self.vault / 'Reunions'
+        return sorted([
+            d.name for d in reunions_dir.iterdir()
+            if d.is_dir() and d.name != 'zConfig' and not d.name.startswith('.')
+        ])
 
     def find_unprocessed_notes(self) -> list:
         notes = []
@@ -56,7 +71,7 @@ class ObsidianWriter:
         new_path = path.with_stem(path.stem + '*')
         path.rename(new_path)
         return new_path
-    
+
     def _gen_content(self, m, t):
         data = m['start'].strftime('%Y-%m-%d')
         hora = m['start'].strftime('%H:%M')
