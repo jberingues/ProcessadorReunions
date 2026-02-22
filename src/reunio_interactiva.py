@@ -5,6 +5,8 @@ from dotenv import load_dotenv
 from colorama import Fore, init
 from calendar_matcher import CalendarMatcher
 from obsidian_writer import ObsidianWriter
+from vocabulary_loader import VocabularyLoader
+from transcript_corrector import TranscriptCorrector
 
 init(autoreset=True)
 
@@ -30,7 +32,7 @@ class ReunioInteractiva:
             if opcio == 1:
                 self._flux_transcripcions()
             elif opcio == 2:
-                print(f"{Fore.YELLOW}Pròximament\n")
+                self._flux_processar()
             else:
                 break
 
@@ -122,6 +124,43 @@ class ReunioInteractiva:
             print(f"{Fore.GREEN}✓ Nota guardada a Obsidian!\n")
         else:
             print(f"{Fore.RED}✗ Error guardant\n")
+
+    def _flux_processar(self):
+        notes = self.obsidian.find_unprocessed_notes()
+        if not notes:
+            print(f"{Fore.YELLOW}No hi ha reunions per processar\n")
+            return
+
+        print(f"{Fore.GREEN}Reunions per processar:\n")
+        for i, n in enumerate(notes, 1):
+            print(f"{i:2d}. {Fore.CYAN}{n['date']} {Fore.WHITE}| {n['title']}")
+        print()
+
+        val = input(f"{Fore.CYAN}Reunió (1-{len(notes)}, q per tornar): ").strip()
+        if val.lower() == 'q':
+            return
+        try:
+            num = int(val)
+            if not 1 <= num <= len(notes):
+                return
+        except ValueError:
+            return
+
+        note = notes[num - 1]
+        print(f"\n{Fore.GREEN}✓ {note['title']}\n")
+
+        vocab_path = self.obsidian.vault / 'Reunions' / 'zConfig' / 'Vocabulari.md'
+        vocab = VocabularyLoader(vocab_path).load()
+        transcript = self.obsidian.read_transcript(note['path'])
+
+        memorized_path = self.obsidian.vault / 'Reunions' / 'zConfig' / 'Canvis-Memoritzats.md'
+        print(f"{Fore.CYAN}Analitzant transcripció...\n")
+        corrector = TranscriptCorrector(vocab, memorized_path=memorized_path)
+        new_transcript = corrector.correct(transcript)
+
+        self.obsidian.update_transcript(note['path'], new_transcript)
+        new_path = self.obsidian.mark_as_processed(note['path'])
+        print(f"{Fore.GREEN}✓ Nota processada: {new_path.name}\n")
 
 if __name__ == "__main__":
     try:

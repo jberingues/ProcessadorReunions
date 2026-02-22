@@ -1,5 +1,6 @@
 from pathlib import Path
 
+
 class ObsidianWriter:
     def __init__(self, vault_path):
         self.vault = Path(vault_path).expanduser()
@@ -21,6 +22,40 @@ class ObsidianWriter:
     def _clean(self, s):
         for c in '<>:"/\\|?*': s = s.replace(c, '')
         return ' '.join(s.split()).replace(' ', '_')
+
+    def find_unprocessed_notes(self) -> list:
+        notes = []
+        for p in (self.vault / 'Reunions').rglob('*.md'):
+            if 'zConfig' in p.parts:
+                continue
+            if not p.stem.endswith('*'):
+                parts = p.stem.split('_', 1)
+                date_str = parts[0] if len(parts[0]) == 6 else ''
+                title = parts[1].replace('_', ' ') if len(parts) > 1 else p.stem
+                notes.append({'path': p, 'title': title, 'date': date_str})
+        return sorted(notes, key=lambda n: n['date'], reverse=True)
+
+    def read_transcript(self, path: Path) -> str:
+        content = path.read_text(encoding='utf-8')
+        marker = '## Transcripció'
+        idx = content.find(marker)
+        if idx == -1:
+            return content
+        return content[idx + len(marker):].strip()
+
+    def update_transcript(self, path: Path, new_transcript: str):
+        content = path.read_text(encoding='utf-8')
+        marker = '## Transcripció'
+        idx = content.find(marker)
+        if idx == -1:
+            return
+        new_content = content[:idx + len(marker)] + '\n\n' + new_transcript + '\n'
+        path.write_text(new_content, encoding='utf-8')
+
+    def mark_as_processed(self, path: Path) -> Path:
+        new_path = path.with_stem(path.stem + '*')
+        path.rename(new_path)
+        return new_path
     
     def _gen_content(self, m, t):
         data = m['start'].strftime('%Y-%m-%d')

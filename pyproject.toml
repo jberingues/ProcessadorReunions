@@ -2,7 +2,7 @@
 name = "processador-reunions"
 version = "0.1.0"
 description = "Sistema de gestió de reunions"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = [
     "python-dotenv>=1.0.0",
     "google-auth>=2.27.0",
@@ -12,4 +12,6 @@ dependencies = [
     "python-dateutil>=2.8.2",
     "pytz>=2024.1",
     "colorama>=0.4.6",
+    "crewai>=0.80.0",
+    "openai>=1.0.0",
 ]
