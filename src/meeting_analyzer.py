@@ -20,7 +20,7 @@ def parse_active_topics(estat_path: Path) -> list[str]:
     content = Path(estat_path).read_text(encoding='utf-8')
     topics = []
     for line in content.splitlines():
-        if line.startswith('## Altres temes'):
+        if re.match(r'^#{1,6} Altres temes', line):
             break
         match = re.match(r'^### (.+)$', line)
         if match:
@@ -83,8 +83,11 @@ class StateFileUpdater:
         if result.updated_topics:
             lines = self._insert_topic_updates(lines, result.updated_topics, date_label)
 
-        if result.new_other_topics:
-            lines = self._update_other_topics(lines, result.new_other_topics)
+        lines, old_altres = self._update_other_topics(lines, result.new_other_topics)
+        if old_altres:
+            self._append_to_historic(estat_path.parent / 'Històric.md', old_altres, date_label)
+        if old_altres:
+            self._append_to_historic(estat_path.parent / 'Històric.md', old_altres, date_label)
 
         Path(estat_path).write_text('\n'.join(lines) + '\n', encoding='utf-8')
 
@@ -103,25 +106,35 @@ class StateFileUpdater:
                     while j < len(lines) and not lines[j].startswith('## ') and not lines[j].startswith('### '):
                         new_lines.append(lines[j])
                         j += 1
-                    new_lines.append(f"**{date_label}:** {updates_by_name[topic]}")
+                    new_lines.append(f"- **{date_label}:** {updates_by_name[topic]}")
                     i = j
                     continue
             i += 1
         return new_lines
 
-    def _update_other_topics(self, lines: list[str], new_topics: list[str]) -> list[str]:
-        # Find ## Altres temes and replace everything after it
+    def _update_other_topics(self, lines: list[str], new_topics: list[str]) -> tuple[list[str], list[str]]:
         new_lines = []
-        found = False
+        old_altres_content = []
+        in_altres = False
         for line in lines:
-            if line.startswith('## Altres temes'):
-                found = True
+            if re.match(r'^#{1,6} Altres temes', line):
+                in_altres = True
                 new_lines.append(line)
                 for topic in new_topics:
                     new_lines.append(f'- {topic}')
                 continue
-            if found:
-                # Skip old content under ## Altres temes
+            if in_altres:
+                if re.match(r'^#{1,6} ', line) and not re.match(r'^#{1,6} Altres temes', line):
+                    in_altres = False
+                    new_lines.append(line)
+                else:
+                    if line.strip():
+                        old_altres_content.append(line)
                 continue
             new_lines.append(line)
-        return new_lines
+        return new_lines, old_altres_content
+
+    def _append_to_historic(self, historic_path: Path, content: list[str], date_label: str):
+        existing = historic_path.read_text(encoding='utf-8') if historic_path.exists() else ''
+        block = f'\n## Reunió {date_label}\n' + '\n'.join(content) + '\n'
+        historic_path.write_text(existing + block, encoding='utf-8')

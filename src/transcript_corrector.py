@@ -1,6 +1,7 @@
 import os
 import re
 from pathlib import Path
+from colorama import Fore, Style
 from crewai import Agent, Task, Crew, LLM
 from json_repair import repair_json
 
@@ -112,7 +113,7 @@ Si no hi ha errors, retorna [].
         start = max(0, idx - chars)
         end = min(len(transcript), idx + len(original) + chars)
         snippet = transcript[start:end]
-        highlighted = snippet.replace(original, f"[{original}]", 1)
+        highlighted = snippet.replace(original, f"{Fore.BLUE}[{original}]{Style.RESET_ALL}", 1)
         return highlighted
 
     def _apply_interactively(self, transcript: str, corrections: list) -> str:
