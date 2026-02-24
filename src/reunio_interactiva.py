@@ -243,7 +243,7 @@ class ReunioInteractiva:
         elif 'Seguiment' in note['path'].parts:
             estat_path = note['path'].parent.parent / 'Estat actual.md'
             if estat_path.exists():
-                from meeting_analyzer import MeetingAnalyzer, StateFileUpdater, parse_active_topics
+                from meeting_analyzer import MeetingAnalyzer, StateFileUpdater, parse_active_topics, format_ordre_del_dia
                 topics = parse_active_topics(estat_path)
                 if topics:
                     print(f"{Fore.CYAN}Analitzant temes de seguiment...\n")
@@ -270,6 +270,13 @@ class ReunioInteractiva:
                         updater = StateFileUpdater()
                         updater.update(estat_path, result, note['date'])
                         print(f"{Fore.GREEN}✓ Estat actual actualitzat\n")
+
+                        # Sobrescriure Ordre del dia propera reunió
+                        date_obj = datetime.strptime(note['date'], '%y%m%d')
+                        ordre_path = note['path'].parent.parent / 'Ordre del dia propera reunió.md'
+                        ordre_content = format_ordre_del_dia(result, topics, date_obj.strftime('%d/%m/%Y'))
+                        ordre_path.write_text(ordre_content, encoding='utf-8')
+                        print(f"{Fore.GREEN}✓ Ordre del dia actualitzat\n")
                     else:
                         mark_processed = False
                         print(f"{Fore.YELLOW}Estat actual no actualitzat. La nota no es marcarà com a processada.\n")

@@ -138,3 +138,24 @@ class StateFileUpdater:
         existing = historic_path.read_text(encoding='utf-8') if historic_path.exists() else ''
         block = f'\n## Reunió {date_label}\n' + '\n'.join(content) + '\n'
         historic_path.write_text(existing + block, encoding='utf-8')
+
+
+def format_ordre_del_dia(result: MeetingAnalysisResult, all_topics: list[str], date_str: str) -> str:
+    lines = [f"### Resum de la reunió anterior {date_str}", ""]
+
+    for i, t in enumerate(result.updated_topics, 1):
+        lines.append(f"#### *{i}) {t.topic_name}*")
+        lines.append(f"* {t.summary}")
+        lines.append("")
+
+    if result.new_other_topics:
+        lines.append("#### *Altres temes*")
+        for topic in result.new_other_topics:
+            lines.append(f"* {topic}")
+        lines.append("")
+
+    lines.append("Ordre del dia propera reunió:")
+    for i, t in enumerate(all_topics, 1):
+        lines.append(f"{i}) {t}")
+
+    return '\n'.join(lines) + '\n'
