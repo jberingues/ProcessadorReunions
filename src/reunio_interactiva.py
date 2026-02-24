@@ -199,9 +199,48 @@ class ReunioInteractiva:
 
         self.obsidian.update_transcript(note['path'], new_transcript)
 
-        # Si és una reunió de Seguiment, analitzar temes
         mark_processed = True
-        if 'Seguiment' in note['path'].parts:
+
+        # Si és una reunió de Sincronització (Daily Scrum)
+        if 'Sincronització' in note['path'].parts:
+            from daily_processor import DailyProcessor
+            attendees = self._extract_attendees_from_note(note['path'])
+            speaker_emails = self._extract_speaker_emails_from_note(note['path'])
+            # Fallback: si no hi ha mapa al frontmatter, extreure correus de la transcripció
+            if not speaker_emails:
+                import re
+                found_emails = set(re.findall(r'\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b', new_transcript))
+                for email in found_emails:
+                    name = self.calendar._resolve_name(email)
+                    if name != email:
+                        speaker_emails[email] = name
+            # Substituir correus per noms a la transcripció
+            daily_transcript = new_transcript
+            for email, name in speaker_emails.items():
+                daily_transcript = daily_transcript.replace(email, name)
+            processor = DailyProcessor(vocab)
+            print(f"{Fore.CYAN}Analitzant Daily Scrum...\n")
+            result = processor.process(daily_transcript, attendees)
+
+            date_obj = datetime.strptime(note['date'], '%y%m%d')
+            md_output = processor.format_markdown(result, note['title'], date_obj.strftime('%d/%m/%Y'))
+
+            print(f"{Fore.GREEN}Resultat:\n")
+            print(md_output)
+
+            conf = input(f"{Fore.CYAN}Afegir al resum de reunions? (s/n): ").strip().lower()
+            print()
+            if conf == 's':
+                year = date_obj.strftime('%Y')
+                resum_path = note['path'].parent.parent / f'Resum reunions {year}.md'
+                self._append_daily_to_resum(resum_path, md_output)
+                print(f"{Fore.GREEN}✓ Resum afegit a {resum_path.name}\n")
+            else:
+                mark_processed = False
+                print(f"{Fore.YELLOW}Resum no afegit. La nota no es marcarà com a processada.\n")
+
+        # Si és una reunió de Seguiment, analitzar temes
+        elif 'Seguiment' in note['path'].parts:
             estat_path = note['path'].parent.parent / 'Estat actual.md'
             if estat_path.exists():
                 from meeting_analyzer import MeetingAnalyzer, StateFileUpdater, parse_active_topics
@@ -238,6 +277,48 @@ class ReunioInteractiva:
         if mark_processed:
             new_path = self.obsidian.mark_as_processed(note['path'])
             print(f"{Fore.GREEN}✓ Nota processada: {new_path.name}\n")
+
+    def _extract_speaker_emails_from_note(self, path) -> dict:
+        """Retorna {email: name} del frontmatter speaker_emails."""
+        import yaml
+        content = path.read_text(encoding='utf-8')
+        if content.startswith('---'):
+            end = content.find('---', 3)
+            if end != -1:
+                frontmatter = yaml.safe_load(content[3:end])
+                if frontmatter and 'speaker_emails' in frontmatter:
+                    return frontmatter['speaker_emails'] or {}
+        return {}
+
+    def _extract_attendees_from_note(self, path) -> list[dict]:
+        import yaml
+        content = path.read_text(encoding='utf-8')
+        # Extract YAML frontmatter
+        if content.startswith('---'):
+            end = content.find('---', 3)
+            if end != -1:
+                frontmatter = yaml.safe_load(content[3:end])
+                if frontmatter and 'attendees' in frontmatter:
+                    attendees = []
+                    for entry in frontmatter['attendees']:
+                        # Extract name from "[[Name]]" format
+                        name = entry.strip().strip('"').strip()
+                        if name.startswith('[[') and name.endswith(']]'):
+                            name = name[2:-2]
+                        attendees.append({'name': name})
+                    return attendees
+        return []
+
+    def _append_daily_to_resum(self, resum_path, md_content: str):
+        if not resum_path.exists():
+            resum_path.parent.mkdir(parents=True, exist_ok=True)
+            year = resum_path.stem.split()[-1]  # "Resum reunions 2026" -> "2026"
+            header = f"---\ntype: resum-reunions\nyear: {year}\n---\n\n"
+            resum_path.write_text(header + md_content + '\n', encoding='utf-8')
+        else:
+            existing = resum_path.read_text(encoding='utf-8')
+            resum_path.write_text(existing + '\n---\n\n' + md_content + '\n', encoding='utf-8')
+
 
 if __name__ == "__main__":
     try:

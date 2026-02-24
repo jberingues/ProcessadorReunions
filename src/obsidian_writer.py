@@ -79,6 +79,11 @@ class ObsidianWriter:
         hora = m['start'].strftime('%H:%M')
         atts = '\n'.join([f'  - "[[{a["name"]}]]"' for a in m['attendees']])
         names = ', '.join([f"[[{a['name']}]]" for a in m['attendees']])
+        email_entries = [a for a in m['attendees'] if a.get('email')]
+        speaker_emails_block = ''
+        if email_entries:
+            email_lines = '\n'.join([f'  {a["email"]}: "{a["name"]}"' for a in email_entries])
+            speaker_emails_block = f'speaker_emails:\n{email_lines}\n'
         return f"""---
 date: {data}
 time: {hora}
@@ -86,7 +91,7 @@ type: reunio
 title: "{m['title']}"
 attendees:
 {atts}
----
+{speaker_emails_block}---
 
 # {m['title']}
 

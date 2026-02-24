@@ -2593,6 +2593,7 @@ dependencies = [
     { name = "python-dateutil" },
     { name = "python-dotenv" },
     { name = "pytz" },
+    { name = "pyyaml" },
 ]
 
 [package.metadata]
@@ -2609,6 +2610,7 @@ requires-dist = [
     { name = "python-dateutil", specifier = ">=2.8.2" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "pytz", specifier = ">=2024.1" },
+    { name = "pyyaml", specifier = ">=6.0" },
 ]
 
 [[package]]
