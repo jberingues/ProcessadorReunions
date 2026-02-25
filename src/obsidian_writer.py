@@ -18,7 +18,7 @@ class ObsidianWriter:
             for nom_nota in ['Estat actual', 'Històric']:
                 nota_path = meeting_dir / f"{nom_nota}.md"
                 if not nota_path.exists():
-                    nota_path.write_text(f"# {nom_nota}\n\n", encoding='utf-8')
+                    nota_path.write_text("", encoding='utf-8')
 
         return True
 

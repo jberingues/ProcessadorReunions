@@ -72,7 +72,7 @@ INSTRUCCIONS:
         lines = [f"# {meeting_title} - {date_str}", ""]
 
         for p in result.participants:
-            lines.append(f"## [[{p.name}]]")
+            lines.append(f"##### [[{p.name}]]")
             if p.ahir:
                 lines.append("**Ahir:**")
                 for item in p.ahir:

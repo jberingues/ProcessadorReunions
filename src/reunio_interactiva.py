@@ -107,11 +107,12 @@ class ReunioInteractiva:
     def _list_meetings(self):
         now = datetime.now()
         past = now - timedelta(days=7)
+        tomorrow_end = (now + timedelta(days=1)).replace(hour=23, minute=59, second=59)
 
         events = self.calendar.service.events().list(
             calendarId='primary',
             timeMin=past.isoformat() + 'Z',
-            timeMax=now.isoformat() + 'Z',
+            timeMax=tomorrow_end.isoformat() + 'Z',
             singleEvents=True,
             orderBy='startTime'
         ).execute().get('items', [])
