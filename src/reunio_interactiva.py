@@ -194,9 +194,19 @@ class ReunioInteractiva:
         transcript = self.obsidian.read_transcript(note['path'])
 
         memorized_path = self.obsidian.vault / 'Reunions' / 'zConfig' / 'Canvis-Memoritzats.md'
+        # Buscar la darrera nota processada de la mateixa carpeta com a referència
+        reference_transcript = None
+        processed_siblings = sorted(
+            [p for p in note['path'].parent.glob('*.md') if '*' in p.stem],
+            key=lambda p: p.stem[:6],
+            reverse=True
+        )
+        if processed_siblings:
+            reference_transcript = self.obsidian.read_transcript(processed_siblings[0])
+
         print(f"{Fore.CYAN}Analitzant transcripció...\n")
         corrector = TranscriptCorrector(vocab, memorized_path=memorized_path)
-        new_transcript = corrector.correct(transcript)
+        new_transcript = corrector.correct(transcript, reference_transcript=reference_transcript)
 
         self.obsidian.update_transcript(note['path'], new_transcript)
 

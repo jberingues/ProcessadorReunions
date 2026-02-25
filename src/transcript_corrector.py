@@ -12,7 +12,7 @@ class TranscriptCorrector:
         self.memorized_path = Path(memorized_path) if memorized_path else None
         self.llm = LLM(model=model or os.getenv('LLM_MODELH'), drop_params=True)
 
-    def correct(self, transcript: str) -> str:
+    def correct(self, transcript: str, reference_transcript: str = None) -> str:
         # 1. Aplicar correccions memoritzades automàticament
         memorized = self._load_memorized()
         if memorized:
@@ -25,6 +25,12 @@ class TranscriptCorrector:
 
         # 2. LLM detecta nous errors
         vocab_text = self._format_vocab()
+        ref_section = ''
+        if reference_transcript:
+            ref_section = f"""
+EXEMPLE DE TRANSCRIPCIÓ JA CORREGIDA (reunió anterior de la mateixa sèrie, usa-la com a referència de noms, termes i estil):
+{reference_transcript}
+"""
 
         agent = Agent(
             role="Corrector de transcripcions",
@@ -44,7 +50,7 @@ TASCA: Revisa la transcripció i detecta TOTES les paraules o frases que probabl
 
 VOCABULARI DE L'EMPRESA:
 {vocab_text}
-
+{ref_section}
 TRANSCRIPCIÓ:
 {transcript}
 
@@ -138,6 +144,11 @@ Si no hi ha errors, retorna [].
                 approved.append(c)
             elif resp.lower() not in ('n', ''):
                 approved.append({**c, 'correccio': resp})
+                mem = input(f"  Memoritzar \"{c['original']}\" → \"{resp}\"? (s/n): ").strip().lower()
+                print()
+                if mem == 's':
+                    self._save_memorized(c['original'], resp)
+                    print(f"  ✓ Memoritzat: \"{c['original']}\" → \"{resp}\"\n")
 
         for c in approved:
             transcript = transcript.replace(c['original'], c['correccio'])
