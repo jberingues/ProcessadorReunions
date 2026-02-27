@@ -1,4 +1,5 @@
 import os
+import re
 from pydantic import BaseModel
 from crewai import Agent, Task, Crew, LLM
 
@@ -21,7 +22,11 @@ class DailyProcessor:
 
     def process(self, transcript: str, attendees: list[dict]) -> DailyScrumResult:
         vocab_text = self._format_vocab()
-        attendees_filtered = [a for a in attendees if a.get('name') != 'Jordi Beringues']
+        attendees_filtered = [
+            a for a in attendees
+            if a.get('name') != 'Jordi Beringues'
+            and not re.match(r'^[^@]+@[^@]+\.[^@]+$', a.get('name', ''))
+        ]
         attendees_list = '\n'.join(f'- {a["name"]}' for a in attendees_filtered)
 
         agent = Agent(
@@ -72,6 +77,8 @@ INSTRUCCIONS:
         lines = [f"# {meeting_title} - {date_str}", ""]
 
         for p in result.participants:
+            if not p.ahir and not p.avui:
+                continue
             lines.append(f"##### [[{p.name}]]")
             if p.ahir:
                 lines.append("**Ahir:**")

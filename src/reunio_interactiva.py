@@ -229,6 +229,18 @@ class ReunioInteractiva:
             daily_transcript = new_transcript
             for email, name in speaker_emails.items():
                 daily_transcript = daily_transcript.replace(email, name)
+
+            # Complementar assistents amb parlants identificats a la transcripció
+            import re as _re
+            transcript_speakers = dict.fromkeys(
+                _re.findall(r'^\d{2}:\d{2}:\d{2} (.+)$', daily_transcript, _re.MULTILINE)
+            )
+            seen_names = {a['name'] for a in attendees}
+            for speaker in transcript_speakers:
+                if not _re.match(r'^Speaker \d+$', speaker) and speaker not in seen_names:
+                    attendees = attendees + [{'name': speaker}]
+                    seen_names.add(speaker)
+
             processor = DailyProcessor(vocab)
             print(f"{Fore.CYAN}Analitzant Daily Scrum...\n")
             result = processor.process(daily_transcript, attendees)
