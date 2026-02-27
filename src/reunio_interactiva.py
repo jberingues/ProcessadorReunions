@@ -292,7 +292,9 @@ class ReunioInteractiva:
 
         # Si és una reunió de Seguiment, analitzar temes
         elif 'Seguiment' in note['path'].parts:
-            estat_path = note['path'].parent.parent / 'Estat actual.md'
+            title = note['title']
+            estat_nom = title[len('Seguiment '):] if title.startswith('Seguiment ') else 'Estat actual'
+            estat_path = note['path'].parent.parent / f'{estat_nom}.md'
             if estat_path.exists():
                 from meeting_analyzer import MeetingAnalyzer, StateFileUpdater, parse_active_topics, format_ordre_del_dia
                 topics = parse_active_topics(estat_path)

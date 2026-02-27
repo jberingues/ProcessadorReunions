@@ -21,7 +21,9 @@ class ObsidianWriter:
 
         if type_folder == 'Seguiment':
             meeting_dir = path.parent.parent
-            for nom_nota in ['Estat actual', 'Històric']:
+            title = meeting['title']
+            estat_nom = title[len('Seguiment '):] if title.startswith('Seguiment ') else 'Estat actual'
+            for nom_nota in [estat_nom, 'Històric']:
                 nota_path = meeting_dir / f"{nom_nota}.md"
                 if not nota_path.exists():
                     nota_path.write_text("", encoding='utf-8')
