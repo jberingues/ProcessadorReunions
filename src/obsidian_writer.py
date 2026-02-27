@@ -7,8 +7,14 @@ class ObsidianWriter:
         if not self.vault.exists():
             raise FileNotFoundError(f"Vault no trobat: {self.vault}")
 
-    def create_meeting_note(self, meeting, transcripcio, type_folder):
-        path = self._gen_path(meeting, type_folder)
+    def find_subfolders(self, type_folder: str) -> list:
+        type_dir = self.vault / 'Reunions' / type_folder
+        if not type_dir.exists():
+            return []
+        return sorted([d.name for d in type_dir.iterdir() if d.is_dir() and not d.name.startswith('.')])
+
+    def create_meeting_note(self, meeting, transcripcio, type_folder, sub_folder=None):
+        path = self._gen_path(meeting, type_folder, sub_folder)
         content = self._gen_content(meeting, transcripcio)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding='utf-8')
@@ -22,10 +28,14 @@ class ObsidianWriter:
 
         return True
 
-    def _gen_path(self, m, type_folder):
-        nom = self._clean(m['title'])
+    def _gen_path(self, m, type_folder, sub_folder=None):
         data = m['start'].strftime('%y%m%d')
-        return self.vault / 'Reunions' / type_folder / nom / 'Reunions' / f"{data}_{nom}.md"
+        if sub_folder:
+            nom_fitxer = self._clean(m['title'])
+            return self.vault / 'Reunions' / type_folder / sub_folder / 'Reunions' / f"{data}_{nom_fitxer}.md"
+        else:
+            nom = self._clean(m['title'])
+            return self.vault / 'Reunions' / type_folder / nom / 'Reunions' / f"{data}_{nom}.md"
 
     def _clean(self, s):
         for c in '<>:"/\\|?*': s = s.replace(c, '')

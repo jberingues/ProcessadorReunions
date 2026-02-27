@@ -22,6 +22,8 @@ CrewLLM._prepare_completion_params = _patched_prepare
 
 init(autoreset=True)
 
+TYPES_WITH_SUBFOLDER = {'Projectes', 'Proveïdors'}
+
 class ReunioInteractiva:
     def __init__(self):
         load_dotenv()
@@ -62,24 +64,50 @@ class ReunioInteractiva:
         return None
 
     def _flux_transcripcions(self):
-        reunions = self._list_meetings()
-        if not reunions:
-            return
         while True:
+            reunions = self._list_meetings()
+            if not reunions:
+                return
             sel = self._select(reunions)
             if not sel:
                 return
             type_folder = self._select_type()
             if not type_folder:
                 return
+            sub_folder = None
+            if type_folder in TYPES_WITH_SUBFOLDER:
+                sub_folder = self._select_subfolder(type_folder)
+                if sub_folder is None:
+                    return
             trans = self._get_transcript()
             if not trans:
                 return
-            self._save(sel, trans, type_folder)
+            self._save(sel, trans, type_folder, sub_folder)
             altra = input(f"{Fore.CYAN}Entrar una altra transcripció? (s/n): ").strip().lower()
             print()
             if altra != 's':
                 break
+
+    def _select_subfolder(self, type_folder):
+        subfolders = self.obsidian.find_subfolders(type_folder)
+        if not subfolders:
+            print(f"{Fore.YELLOW}No hi ha carpetes a {type_folder}\n")
+            return None
+        print(f"{Fore.GREEN}Selecciona {type_folder[:-1].lower()}:\n")
+        for i, s in enumerate(subfolders, 1):
+            print(f"{i:2d}. {Fore.CYAN}{s}")
+        print()
+        val = input(f"{Fore.CYAN}Opció (1-{len(subfolders)}, q per tornar): ").strip()
+        if val.lower() == 'q':
+            return None
+        try:
+            num = int(val)
+            if 1 <= num <= len(subfolders):
+                print(f"{Fore.GREEN}✓ {subfolders[num-1]}\n")
+                return subfolders[num-1]
+        except ValueError:
+            pass
+        return None
 
     def _select_type(self):
         types = self.obsidian.find_meeting_types()
@@ -159,8 +187,8 @@ class ReunioInteractiva:
         except: pass
         return None
 
-    def _save(self, reunio, trans, type_folder):
-        if self.obsidian.create_meeting_note(reunio, trans, type_folder):
+    def _save(self, reunio, trans, type_folder, sub_folder=None):
+        if self.obsidian.create_meeting_note(reunio, trans, type_folder, sub_folder):
             print(f"{Fore.GREEN}✓ Nota guardada a Obsidian!\n")
         else:
             print(f"{Fore.RED}✗ Error guardant\n")
