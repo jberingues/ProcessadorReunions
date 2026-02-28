@@ -34,6 +34,31 @@ class ObsidianWriter:
 
         return True
 
+    def append_to_provider_note(self, note_path: Path, date_str: str, meeting_title: str, summary: str):
+        provider_name = note_path.parent.parent.name
+        provider_note = note_path.parent.parent / f"{provider_name}.md"
+
+        if not provider_note.exists():
+            provider_note.write_text(f"# {provider_name}\n\n", encoding='utf-8')
+
+        content = provider_note.read_text(encoding='utf-8')
+        section_title = f"{date_str}_{meeting_title.replace(' ', '_')}"
+        date_prefix = f"## {date_str}_"
+
+        if date_prefix in content:
+            idx = content.find(date_prefix)
+            next_section = content.find('\n## ', idx + 1)
+            if next_section == -1:
+                new_content = content.rstrip('\n') + f"\n\n#### Resum reunió:\n{summary}\n"
+            else:
+                new_content = (content[:next_section].rstrip('\n') +
+                               f"\n\n#### Resum reunió:\n{summary}\n\n" +
+                               content[next_section:].lstrip('\n'))
+        else:
+            new_content = content.rstrip('\n') + f"\n\n## {section_title}\n\n{summary}\n"
+
+        provider_note.write_text(new_content, encoding='utf-8')
+
     def append_to_historic(self, note_path: Path, title: str, summary: str):
         historic_path = note_path.parent.parent / 'Històric.md'
         entry = f"\n## {title}\n\n{summary}\n"

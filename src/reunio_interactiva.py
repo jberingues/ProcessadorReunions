@@ -236,6 +236,8 @@ class ReunioInteractiva:
             mark_processed = self._processar_sincronitzacio(note, new_transcript)
         elif 'Seguiment' in note['path'].parts:
             mark_processed = self._processar_seguiment(note, new_transcript)
+        elif 'Proveïdors' in note['path'].parts:
+            mark_processed = self._processar_proveidors(note, new_transcript)
 
         if mark_processed:
             new_path = self.obsidian.mark_as_processed(note['path'])
@@ -363,6 +365,25 @@ class ReunioInteractiva:
             return True
         else:
             print(f"{Fore.YELLOW}{estat_nom} no actualitzat. La nota no es marcarà com a processada.\n")
+            return False
+
+    def _processar_proveidors(self, note, new_transcript):
+        print(f"{Fore.CYAN}Generant resum...\n")
+        summary = self._generate_summary(new_transcript)
+
+        print(f"{Fore.GREEN}Resum:\n")
+        print(summary)
+        print()
+
+        conf = input(f"{Fore.CYAN}Afegir a la nota del proveïdor? (s/n): ").strip().lower()
+        print()
+        if conf == 's':
+            self.obsidian.append_to_provider_note(note['path'], note['date'], note['title'], summary)
+            provider_name = note['path'].parent.parent.name
+            print(f"{Fore.GREEN}✓ Afegit a {provider_name}.md\n")
+            return True
+        else:
+            print(f"{Fore.YELLOW}No afegit. La nota no es marcarà com a processada.\n")
             return False
 
     def _processar_seguiment_puntual(self, note, new_transcript):
