@@ -1,7 +1,6 @@
 import os
 import re
 from pathlib import Path
-from colorama import Fore, Style
 from crewai import Agent, Task, Crew, LLM
 from json_repair import repair_json
 
@@ -12,16 +11,19 @@ class TranscriptCorrector:
         self.memorized_path = Path(memorized_path) if memorized_path else None
         self.llm = LLM(model=model or os.getenv('LLM_MODELH'), drop_params=True)
 
-    def correct(self, transcript: str, reference_transcript: str = None) -> str:
+    def detect(self, transcript: str, reference_transcript: str = None) -> tuple[str, list[dict]]:
+        """Aplica correccions memoritzades i detecta nous errors amb LLM.
+
+        Returns:
+            (transcripció amb memoritzades aplicades, llista de correccions noves)
+            Cada correcció: {"original", "correccio", "motiu", "frase"}
+        """
         # 1. Aplicar correccions memoritzades automàticament
         memorized = self._load_memorized()
         if memorized:
-            print(f"  Aplicant {len(memorized)} correccions memoritzades...")
             for original, correccio in memorized.items():
                 if original in transcript:
                     transcript = transcript.replace(original, correccio)
-                    print(f"  ✓ \"{original}\" → \"{correccio}\"")
-            print()
 
         # 2. LLM detecta nous errors
         vocab_text = self._format_vocab()
@@ -69,17 +71,24 @@ Si no hi ha errors, retorna [].
         )
 
         crew = Crew(agents=[agent], tasks=[task], verbose=False)
-        print("  → Agent corrector iniciat...")
         result = crew.kickoff()
-        print("  ✓ Agent corrector finalitzat\n")
 
         raw = result.raw if hasattr(result, 'raw') else str(result)
         corrections = repair_json(raw, return_objects=True) or []
         if not isinstance(corrections, list):
             corrections = []
 
-        # 3. Revisió interactiva dels nous errors detectats
-        return self._apply_interactively(transcript, corrections)
+        return transcript, corrections
+
+    def apply(self, transcript: str, corrections: list[dict]) -> str:
+        """Aplica les correccions aprovades a la transcripció."""
+        for c in corrections:
+            transcript = transcript.replace(c['original'], c['correccio'])
+        return transcript
+
+    def save_memorized(self, original: str, correccio: str):
+        """Desa una correcció al fitxer de correccions memoritzades."""
+        self._save_memorized(original, correccio)
 
     def _load_memorized(self) -> dict:
         if not self.memorized_path or not self.memorized_path.exists():
@@ -111,48 +120,3 @@ Si no hi ha errors, retorna [].
         for seccio, paraules in self.vocab.items():
             lines.append(f"{seccio}: {', '.join(paraules)}")
         return '\n'.join(lines)
-
-    def _extract_context(self, transcript: str, original: str, chars: int = 200) -> str:
-        idx = transcript.find(original)
-        if idx == -1:
-            return ''
-        start = max(0, idx - chars)
-        end = min(len(transcript), idx + len(original) + chars)
-        snippet = transcript[start:end]
-        highlighted = snippet.replace(original, f"{Fore.BLUE}[{original}]{Style.RESET_ALL}", 1)
-        return highlighted
-
-    def _apply_interactively(self, transcript: str, corrections: list) -> str:
-        if not corrections:
-            print("  Cap error detectat.\n")
-            return transcript
-
-        approved = []
-        for c in corrections:
-            context = self._extract_context(transcript, c['original'], chars=200)
-            if context:
-                print(f"  ...{context}...")
-            elif c.get('frase'):
-                frase = c['frase'].replace(c['original'], f"{Fore.BLUE}[{c['original']}]{Style.RESET_ALL}", 1)
-                print(f"  ...{frase}...")
-            print(f"  \"{c['original']}\" → \"{c['correccio']}\"  ({c['motiu']})")
-            resp = input("  Aplicar? (s/n/m=siMemoritza/text propi): ").strip()
-            print()
-
-            if resp.lower() == 'm':
-                approved.append(c)
-                self._save_memorized(c['original'], c['correccio'])
-                print(f"  ✓ Memoritzat: \"{c['original']}\" → \"{c['correccio']}\"\n")
-            elif resp.lower() == 's':
-                approved.append(c)
-            elif resp.lower() not in ('n', ''):
-                approved.append({**c, 'correccio': resp})
-                mem = input(f"  Memoritzar \"{c['original']}\" → \"{resp}\"? (s/n): ").strip().lower()
-                print()
-                if mem == 's':
-                    self._save_memorized(c['original'], resp)
-                    print(f"  ✓ Memoritzat: \"{c['original']}\" → \"{resp}\"\n")
-
-        for c in approved:
-            transcript = transcript.replace(c['original'], c['correccio'])
-        return transcript

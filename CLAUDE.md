@@ -12,11 +12,11 @@ Fetches meetings from Google Calendar (last 7 days, with attendees) and creates 
 # Install dependencies
 uv sync
 
-# Run the app
-uv run python src/reunio_interactiva.py
+# Run the GUI app
+uv run python src/gui/app.py
 ```
 
-The app is interactive: it lists recent meetings, prompts for a selection, then accepts a transcript via stdin (Ctrl+D to finish).
+The app opens a PySide6 GUI window with two wizard flows: "Entrar transcripcions" and "Processar reunions".
 
 ## Required Configuration
 
@@ -26,7 +26,7 @@ The app is interactive: it lists recent meetings, prompts for a selection, then 
 
 ## Architecture
 
-Three modules in `src/`:
+Modules in `src/`:
 
 **`calendar_matcher.py` — `CalendarMatcher`**
 Handles Google Calendar OAuth (credentials stored in `config/google_credentials.json`, token cached in `config/token.pickle`). Exposes `self.service` (the Google API client) and `_parse_event(event)` which normalises a raw Calendar API event into a dict: `{title, start, end, duration, attendees}`.
@@ -34,5 +34,5 @@ Handles Google Calendar OAuth (credentials stored in `config/google_credentials.
 **`obsidian_writer.py` — `ObsidianWriter`**
 Takes the parsed meeting dict and a transcript string, generates YAML frontmatter + Markdown, and writes to `<vault>/Reunions/<clean_title>/<YYMMDD>_<clean_title>.md`. Title sanitisation strips filesystem-unsafe characters and replaces spaces with underscores.
 
-**`reunio_interactiva.py` — `ReunioInteractiva`**
-Orchestrates the interactive CLI flow: list meetings → user selects → paste transcript → save. Only meetings with `attendees` in the Calendar API response are shown. The script must be run from inside `src/` (or via `uv run python src/...`) because imports are relative (`from calendar_matcher import ...`).
+**`gui/` — PySide6 GUI**
+`app.py` is the entry point. `main_window.py` shows two buttons that open wizard dialogs: `wizard_transcripcio.py` (enter transcriptions) and `wizard_processar.py` (process meetings with corrections, analysis, summaries). Workers in `workers.py` run long operations in QThread. Custom widgets in `widgets/`.
