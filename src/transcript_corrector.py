@@ -132,6 +132,9 @@ Si no hi ha errors, retorna [].
             context = self._extract_context(transcript, c['original'], chars=200)
             if context:
                 print(f"  ...{context}...")
+            elif c.get('frase'):
+                frase = c['frase'].replace(c['original'], f"{Fore.BLUE}[{c['original']}]{Style.RESET_ALL}", 1)
+                print(f"  ...{frase}...")
             print(f"  \"{c['original']}\" → \"{c['correccio']}\"  ({c['motiu']})")
             resp = input("  Aplicar? (s/n/m=siMemoritza/text propi): ").strip()
             print()

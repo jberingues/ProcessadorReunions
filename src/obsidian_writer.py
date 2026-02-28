@@ -13,22 +13,36 @@ class ObsidianWriter:
             return []
         return sorted([d.name for d in type_dir.iterdir() if d.is_dir() and not d.name.startswith('.')])
 
-    def create_meeting_note(self, meeting, transcripcio, type_folder, sub_folder=None):
+    def create_meeting_note(self, meeting, transcripcio, type_folder, sub_folder=None, subtype=None):
         path = self._gen_path(meeting, type_folder, sub_folder)
-        content = self._gen_content(meeting, transcripcio)
+        content = self._gen_content(meeting, transcripcio, subtype)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding='utf-8')
 
         if type_folder == 'Seguiment':
             meeting_dir = path.parent.parent
-            title = meeting['title']
-            estat_nom = title[len('Seguiment '):] if title.startswith('Seguiment ') else 'Estat actual'
-            for nom_nota in [estat_nom, 'Històric']:
+            if subtype == 'puntual':
+                notes_to_create = ['Històric']
+            else:
+                title = meeting['title']
+                estat_nom = title[len('Seguiment '):] if title.startswith('Seguiment ') else 'Estat actual'
+                notes_to_create = [estat_nom, 'Històric']
+            for nom_nota in notes_to_create:
                 nota_path = meeting_dir / f"{nom_nota}.md"
                 if not nota_path.exists():
                     nota_path.write_text("", encoding='utf-8')
 
         return True
+
+    def append_to_historic(self, note_path: Path, title: str, summary: str):
+        historic_path = note_path.parent.parent / 'Històric.md'
+        entry = f"\n## {title}\n\n{summary}\n"
+        if not historic_path.exists():
+            historic_path.parent.mkdir(parents=True, exist_ok=True)
+            historic_path.write_text(entry.lstrip(), encoding='utf-8')
+        else:
+            content = historic_path.read_text(encoding='utf-8')
+            historic_path.write_text(content + entry, encoding='utf-8')
 
     def _gen_path(self, m, type_folder, sub_folder=None):
         data = m['start'].strftime('%y%m%d')
@@ -86,7 +100,7 @@ class ObsidianWriter:
         path.rename(new_path)
         return new_path
 
-    def _gen_content(self, m, t):
+    def _gen_content(self, m, t, subtype=None):
         data = m['start'].strftime('%Y-%m-%d')
         hora = m['start'].strftime('%H:%M')
         atts = '\n'.join([f'  - "[[{a["name"]}]]"' for a in m['attendees']])
@@ -96,11 +110,12 @@ class ObsidianWriter:
         if email_entries:
             email_lines = '\n'.join([f'  {a["email"]}: "{a["name"]}"' for a in email_entries])
             speaker_emails_block = f'speaker_emails:\n{email_lines}\n'
+        subtype_line = f'subtype: {subtype}\n' if subtype else ''
         return f"""---
 date: {data}
 time: {hora}
 type: reunio
-title: "{m['title']}"
+{subtype_line}title: "{m['title']}"
 attendees:
 {atts}
 {speaker_emails_block}---
