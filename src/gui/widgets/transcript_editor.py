@@ -1,5 +1,5 @@
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QPlainTextEdit, QLabel
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QFontDatabase
 
 
 class TranscriptEditor(QWidget):
@@ -9,7 +9,7 @@ class TranscriptEditor(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
 
         self.editor = QPlainTextEdit()
-        self.editor.setFont(QFont("Courier", 11))
+        self.editor.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
         self.editor.setPlaceholderText("Enganxa la transcripció aquí...")
         self.editor.textChanged.connect(self._update_count)
 

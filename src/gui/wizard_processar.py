@@ -8,14 +8,14 @@ from PySide6.QtWidgets import (
     QProgressBar, QPlainTextEdit, QMessageBox, QHeaderView
 )
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QFontDatabase
 from vocabulary_loader import VocabularyLoader
 from transcript_corrector import TranscriptCorrector
 from workers import (
     CorrectionDetectWorker, DailyProcessorWorker,
     MeetingAnalyzerWorker, SummaryWorker
 )
-from widgets.correction_checklist import CorrectionChecklist
+from widgets.inline_correction_editor import InlineCorrectionEditor
 
 
 class WizardProcessar(QDialog):
@@ -104,11 +104,9 @@ class WizardProcessar(QDialog):
         self.progress_corrections.setRange(0, 0)
         page.addWidget(self.progress_corrections)
 
-        # Placeholder per al checklist (es reemplaça dinàmicament)
-        self.checklist_container = QVBoxLayout()
-        page.addLayout(self.checklist_container)
-
-        self.correction_checklist = None
+        # L'InlineCorrectionEditor s'afegeix aquí dinàmicament
+        self._corrections_page_layout = page
+        self.inline_editor: InlineCorrectionEditor | None = None
 
         self.stack.addWidget(w)
 
@@ -117,11 +115,11 @@ class WizardProcessar(QDialog):
         self.progress_corrections.setVisible(True)
         self.btn_next.setEnabled(False)
 
-        # Netejar checklist anterior
-        if self.correction_checklist:
-            self.correction_checklist.setParent(None)
-            self.correction_checklist.deleteLater()
-            self.correction_checklist = None
+        # Netejar editor anterior
+        if self.inline_editor:
+            self.inline_editor.setParent(None)
+            self.inline_editor.deleteLater()
+            self.inline_editor = None
 
         note = self.selected_note
         vocab_path = self.obsidian.vault / 'Reunions' / 'zConfig' / 'Vocabulari.md'
@@ -150,15 +148,17 @@ class WizardProcessar(QDialog):
 
     def _on_corrections_detected(self, transcript, corrections):
         self.progress_corrections.setVisible(False)
-        self.corrected_transcript = transcript
 
-        if not corrections:
-            self.label_corrections.setText("Cap error detectat.")
+        if corrections:
+            self.label_corrections.setText(
+                f"{len(corrections)} correccions detectades. "
+                "Revisa i edita el text lliurement:"
+            )
         else:
-            self.label_corrections.setText(f"{len(corrections)} possibles correccions:")
-            self.correction_checklist = CorrectionChecklist(corrections)
-            self.checklist_container.addWidget(self.correction_checklist)
+            self.label_corrections.setText("Cap correcció detectada. Pots editar el text lliurement:")
 
+        self.inline_editor = InlineCorrectionEditor(transcript, corrections)
+        self._corrections_page_layout.addWidget(self.inline_editor)
         self.btn_next.setEnabled(True)
 
     def _on_corrections_error(self, msg):
@@ -167,16 +167,11 @@ class WizardProcessar(QDialog):
         self.btn_next.setEnabled(True)
 
     def _apply_corrections(self):
-        """Aplica les correccions aprovades i memoritza les marcades."""
-        if self.correction_checklist:
-            approved = self.correction_checklist.get_approved_corrections()
-            for c in approved:
-                if c.get("memorize"):
-                    self.corrector.save_memorized(c["original"], c["correccio"])
-            if approved:
-                self.corrected_transcript = self.corrector.apply(
-                    self.corrected_transcript, approved
-                )
+        """Agafa el text final de l'editor (ja amb les correccions aplicades inline) i memoritza."""
+        if self.inline_editor:
+            self.corrected_transcript = self.inline_editor.get_final_text()
+            for c in self.inline_editor.get_memorize_list():
+                self.corrector.save_memorized(c['original'], c['correccio'])
 
         # Actualitzar la nota amb la transcripció corregida
         self.obsidian.update_transcript(self.selected_note['path'], self.corrected_transcript)
@@ -198,7 +193,7 @@ class WizardProcessar(QDialog):
 
         self.result_text = QPlainTextEdit()
         self.result_text.setReadOnly(True)
-        self.result_text.setFont(QFont("Courier", 11))
+        self.result_text.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
         page.addWidget(self.result_text)
 
         self.stack.addWidget(w)
@@ -531,10 +526,10 @@ class WizardProcessar(QDialog):
         self.processing_markdown = None
         self._processing_type = None
 
-        if self.correction_checklist:
-            self.correction_checklist.setParent(None)
-            self.correction_checklist.deleteLater()
-            self.correction_checklist = None
+        if self.inline_editor:
+            self.inline_editor.setParent(None)
+            self.inline_editor.deleteLater()
+            self.inline_editor = None
 
         self.result_text.clear()
         self.table_notes.clearSelection()
