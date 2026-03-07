@@ -1,9 +1,10 @@
+from datetime import datetime, timedelta
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QStackedWidget,
     QPushButton, QTableWidget, QTableWidgetItem, QListWidget,
-    QLabel, QProgressBar, QMessageBox, QHeaderView
+    QLabel, QProgressBar, QMessageBox, QHeaderView, QDateEdit
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QDate
 from workers import CalendarWorker
 from widgets.transcript_editor import TranscriptEditor
 
@@ -59,6 +60,28 @@ class WizardTranscripcio(QDialog):
 
         page.addWidget(QLabel("Selecciona una reunió:"))
 
+        # Filtre de dates
+        date_row = QHBoxLayout()
+        date_row.addWidget(QLabel("Data inicial:"))
+        self.date_from = QDateEdit()
+        self.date_from.setCalendarPopup(True)
+        self.date_from.setDate(QDate.currentDate().addDays(-1))
+        self.date_from.setDisplayFormat("dd/MM/yyyy")
+        date_row.addWidget(self.date_from)
+        date_row.addSpacing(16)
+        date_row.addWidget(QLabel("Data final:"))
+        self.date_to = QDateEdit()
+        self.date_to.setCalendarPopup(True)
+        self.date_to.setDate(QDate.currentDate())
+        self.date_to.setDisplayFormat("dd/MM/yyyy")
+        date_row.addWidget(self.date_to)
+        date_row.addSpacing(16)
+        btn_search = QPushButton("Cercar")
+        btn_search.clicked.connect(self._load_meetings)
+        date_row.addWidget(btn_search)
+        date_row.addStretch()
+        page.addLayout(date_row)
+
         self.progress_meetings = QProgressBar()
         self.progress_meetings.setRange(0, 0)
         page.addWidget(self.progress_meetings)
@@ -78,7 +101,11 @@ class WizardTranscripcio(QDialog):
     def _load_meetings(self):
         self.progress_meetings.setVisible(True)
         self.table_meetings.setRowCount(0)
-        self.worker_cal = CalendarWorker(self.calendar, self)
+        qd_from = self.date_from.date()
+        qd_to = self.date_to.date()
+        date_from = datetime(qd_from.year(), qd_from.month(), qd_from.day())
+        date_to = datetime(qd_to.year(), qd_to.month(), qd_to.day())
+        self.worker_cal = CalendarWorker(self.calendar, date_from=date_from, date_to=date_to, parent=self)
         self.worker_cal.finished.connect(self._on_meetings_loaded)
         self.worker_cal.error.connect(self._on_meetings_error)
         self.worker_cal.start()

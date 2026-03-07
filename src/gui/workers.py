@@ -8,20 +8,22 @@ class CalendarWorker(QThread):
     finished = Signal(list)
     error = Signal(str)
 
-    def __init__(self, calendar, parent=None):
+    def __init__(self, calendar, date_from=None, date_to=None, parent=None):
         super().__init__(parent)
         self.calendar = calendar
+        self.date_from = date_from
+        self.date_to = date_to
 
     def run(self):
         try:
             now = datetime.now()
-            past = now - timedelta(days=7)
-            tomorrow_end = (now + timedelta(days=1)).replace(hour=23, minute=59, second=59)
+            time_min = self.date_from if self.date_from else now - timedelta(days=7)
+            time_max = (self.date_to if self.date_to else now).replace(hour=23, minute=59, second=59)
 
             events = self.calendar.service.events().list(
                 calendarId='primary',
-                timeMin=past.isoformat() + 'Z',
-                timeMax=tomorrow_end.isoformat() + 'Z',
+                timeMin=time_min.isoformat() + 'Z',
+                timeMax=time_max.isoformat() + 'Z',
                 singleEvents=True,
                 orderBy='startTime'
             ).execute().get('items', [])
