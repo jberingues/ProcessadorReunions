@@ -82,6 +82,38 @@ class ObsidianWriter:
         except Exception:
             return False
 
+    def create_email_note(self, thread: dict, target_dir) -> bool:
+        target_dir = Path(target_dir)
+        data = thread['date'].strftime('%y%m%d')
+        nom = self._clean(thread['subject'])
+        path = target_dir / f"{data}_{nom}.md"
+        date_fmt = thread['date'].strftime('%Y-%m-%d')
+        cc = thread.get('cc', '')
+        cc_line_yaml = f'cc: "{cc}"\n' if cc else ''
+        cc_line_body = f'**CC:** {cc}\n' if cc else ''
+        content = f"""---
+date: {date_fmt}
+type: correu
+subject: "{thread['subject']}"
+from: "{thread['from']}"
+{cc_line_yaml}---
+
+# {thread['subject']}
+
+**De:** {thread['from']}
+{cc_line_body}**Data:** {date_fmt}
+
+---
+
+{thread['body']}
+"""
+        try:
+            target_dir.mkdir(parents=True, exist_ok=True)
+            path.write_text(content, encoding='utf-8')
+            return True
+        except Exception:
+            return False
+
     def _gen_path(self, m, type_folder, sub_folder=None):
         data = m['start'].strftime('%y%m%d')
         if sub_folder:

@@ -8,6 +8,7 @@ from googleapiclient.discovery import build
 SCOPES = [
     'https://www.googleapis.com/auth/calendar.readonly',
     'https://www.googleapis.com/auth/directory.readonly',
+    'https://www.googleapis.com/auth/gmail.readonly',
 ]
 
 class CalendarMatcher:
@@ -34,6 +35,7 @@ class CalendarMatcher:
                 pickle.dump(creds, f)
         self.service = build('calendar', 'v3', credentials=creds)
         self.people = build('people', 'v1', credentials=creds)
+        self.gmail = build('gmail', 'v1', credentials=creds)
 
     def _resolve_name(self, email):
         if email in self._name_cache:

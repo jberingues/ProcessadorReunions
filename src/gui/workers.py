@@ -94,6 +94,24 @@ class MeetingAnalyzerWorker(QThread):
             self.error.emit(str(e))
 
 
+class GmailWorker(QThread):
+    finished = Signal(list)
+    error = Signal(str)
+
+    def __init__(self, fetcher, date_from, date_to, parent=None):
+        super().__init__(parent)
+        self.fetcher = fetcher
+        self.date_from = date_from
+        self.date_to = date_to
+
+    def run(self):
+        try:
+            threads = self.fetcher.fetch_threads(self.date_from, self.date_to)
+            self.finished.emit(threads)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
 class SummaryWorker(QThread):
     finished = Signal(str)
     error = Signal(str)

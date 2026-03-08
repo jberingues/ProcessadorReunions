@@ -5,6 +5,9 @@ from obsidian_writer import ObsidianWriter
 from wizard_transcripcio import WizardTranscripcio
 from wizard_processar import WizardProcessar
 from wizard_nou_projecte import WizardNouProjecte
+from wizard_correus import WizardCorreus
+from wizard_fitxers import WizardFitxers
+from gmail_fetcher import GmailFetcher
 
 
 class MainWindow(QMainWindow):
@@ -15,6 +18,7 @@ class MainWindow(QMainWindow):
 
         self.calendar = CalendarMatcher()
         self.obsidian = ObsidianWriter(vault_path)
+        self.gmail_fetcher = GmailFetcher(self.calendar.gmail)
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -33,6 +37,18 @@ class MainWindow(QMainWindow):
         self.btn_transcripcions.clicked.connect(self._open_transcripcions)
         layout.addWidget(self.btn_transcripcions)
 
+        self.btn_correus = QPushButton("Entrar correus")
+        self.btn_correus.setMinimumHeight(50)
+        self.btn_correus.setStyleSheet("font-size: 14px;")
+        self.btn_correus.clicked.connect(self._open_correus)
+        layout.addWidget(self.btn_correus)
+
+        self.btn_fitxers = QPushButton("Entrar fitxers")
+        self.btn_fitxers.setMinimumHeight(50)
+        self.btn_fitxers.setStyleSheet("font-size: 14px;")
+        self.btn_fitxers.clicked.connect(self._open_fitxers)
+        layout.addWidget(self.btn_fitxers)
+
         self.btn_processar = QPushButton("Processar reunions")
         self.btn_processar.setMinimumHeight(50)
         self.btn_processar.setStyleSheet("font-size: 14px;")
@@ -45,7 +61,7 @@ class MainWindow(QMainWindow):
         self.btn_nou_projecte.clicked.connect(self._open_nou_projecte)
         layout.addWidget(self.btn_nou_projecte)
 
-        self._all_buttons = [self.btn_transcripcions, self.btn_processar, self.btn_nou_projecte]
+        self._all_buttons = [self.btn_transcripcions, self.btn_correus, self.btn_fitxers, self.btn_processar, self.btn_nou_projecte]
 
     def _open_transcripcions(self):
         self._disable_all()
@@ -62,6 +78,18 @@ class MainWindow(QMainWindow):
     def _open_nou_projecte(self):
         self._disable_all()
         wizard = WizardNouProjecte(self.calendar, self.obsidian, self)
+        wizard.finished.connect(self._wizard_closed)
+        wizard.open()
+
+    def _open_correus(self):
+        self._disable_all()
+        wizard = WizardCorreus(self.gmail_fetcher, self.obsidian, self)
+        wizard.finished.connect(self._wizard_closed)
+        wizard.open()
+
+    def _open_fitxers(self):
+        self._disable_all()
+        wizard = WizardFitxers(self.obsidian, self)
         wizard.finished.connect(self._wizard_closed)
         wizard.open()
 
