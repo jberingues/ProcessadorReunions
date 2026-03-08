@@ -69,6 +69,19 @@ class ObsidianWriter:
             content = historic_path.read_text(encoding='utf-8')
             historic_path.write_text(content + entry, encoding='utf-8')
 
+    def create_simple_note(self, meeting: dict, transcripcio: str, target_dir) -> bool:
+        from pathlib import Path
+        target_dir = Path(target_dir)
+        data = meeting['start'].strftime('%y%m%d')
+        nom_fitxer = self._clean(meeting['title'])
+        path = target_dir / f"{data}_{nom_fitxer}.md"
+        try:
+            target_dir.mkdir(parents=True, exist_ok=True)
+            path.write_text(self._gen_content(meeting, transcripcio), encoding='utf-8')
+            return True
+        except Exception:
+            return False
+
     def _gen_path(self, m, type_folder, sub_folder=None):
         data = m['start'].strftime('%y%m%d')
         if sub_folder:

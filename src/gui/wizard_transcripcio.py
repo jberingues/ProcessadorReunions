@@ -1,14 +1,13 @@
-from datetime import datetime, timedelta
+from datetime import datetime
+from pathlib import Path
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QStackedWidget,
-    QPushButton, QTableWidget, QTableWidgetItem, QListWidget,
+    QDialog, QVBoxLayout, QHBoxLayout, QStackedWidget, QWidget,
+    QPushButton, QTableWidget, QTableWidgetItem, QTreeWidget, QTreeWidgetItem,
     QLabel, QProgressBar, QMessageBox, QHeaderView, QDateEdit
 )
 from PySide6.QtCore import Qt, QDate
 from workers import CalendarWorker
 from widgets.transcript_editor import TranscriptEditor
-
-TYPES_WITH_SUBFOLDER = {'Projectes', 'Proveïdors'}
 
 
 class WizardTranscripcio(QDialog):
@@ -21,9 +20,7 @@ class WizardTranscripcio(QDialog):
 
         self.reunions = []
         self.selected_reunio = None
-        self.selected_type = None
-        self.selected_subfolder = None
-        self.selected_subtype = None
+        self.selected_target_dir: Path | None = None
 
         layout = QVBoxLayout(self)
 
@@ -45,7 +42,7 @@ class WizardTranscripcio(QDialog):
         layout.addLayout(nav)
 
         self._build_page0_meetings()
-        self._build_page1_type()
+        self._build_page1_tree()
         self._build_page2_transcript()
         self._build_page3_confirm()
 
@@ -125,56 +122,44 @@ class WizardTranscripcio(QDialog):
         self.progress_meetings.setVisible(False)
         QMessageBox.critical(self, "Error", f"Error carregant reunions:\n{msg}")
 
-    # -- Pàgina 1: Tipus + subcarpeta --
+    # -- Pàgina 1: Selecció de directori --
 
-    def _build_page1_type(self):
+    def _build_page1_tree(self):
         page = QVBoxLayout()
         container = self._make_page(page)
-
-        page.addWidget(QLabel("Tipus de reunió:"))
-        self.list_types = QListWidget()
-        self.list_types.currentRowChanged.connect(self._on_type_changed)
-        page.addWidget(self.list_types)
-
-        self.label_subfolder = QLabel("Subcarpeta:")
-        self.label_subfolder.setVisible(False)
-        page.addWidget(self.label_subfolder)
-
-        self.list_subfolders = QListWidget()
-        self.list_subfolders.setVisible(False)
-        page.addWidget(self.list_subfolders)
-
+        page.addWidget(QLabel("Selecciona el directori de destí:"))
+        self.tree_dirs = QTreeWidget()
+        self.tree_dirs.setHeaderHidden(True)
+        self.tree_dirs.setSelectionMode(QTreeWidget.SelectionMode.SingleSelection)
+        self.tree_dirs.itemSelectionChanged.connect(self._on_tree_selection_changed)
+        page.addWidget(self.tree_dirs)
         self.stack.addWidget(container)
 
-    def _populate_types(self):
-        self.list_types.clear()
-        types = self.obsidian.find_meeting_types()
-        if 'Seguiment' in types:
-            idx = types.index('Seguiment')
-            types.insert(idx + 1, 'Seguiment puntual')
-        for t in types:
-            self.list_types.addItem(t)
+    def _populate_tree(self):
+        self.tree_dirs.clear()
+        self.selected_target_dir = None
+        self._add_tree_items(None, self.obsidian.vault / 'Reunions')
+        self.tree_dirs.collapseAll()
 
-    def _on_type_changed(self, row):
-        if row < 0:
-            self.list_subfolders.setVisible(False)
-            self.label_subfolder.setVisible(False)
+    def _add_tree_items(self, parent_item, directory: Path):
+        try:
+            subdirs = sorted(
+                [d for d in directory.iterdir()
+                 if d.is_dir() and not d.name.startswith('.') and d.name != 'zConfig'],
+                key=lambda d: d.name
+            )
+        except PermissionError:
             return
+        for d in subdirs:
+            item = QTreeWidgetItem(self.tree_dirs if parent_item is None else parent_item)
+            item.setText(0, d.name)
+            item.setData(0, Qt.ItemDataRole.UserRole, d)
+            self._add_tree_items(item, d)
 
-        type_name = self.list_types.item(row).text()
-        needs_subfolder = type_name in TYPES_WITH_SUBFOLDER or type_name == 'Seguiment puntual'
-
-        if needs_subfolder:
-            lookup = 'Seguiment' if type_name == 'Seguiment puntual' else type_name
-            subfolders = self.obsidian.find_subfolders(lookup)
-            self.list_subfolders.clear()
-            for s in subfolders:
-                self.list_subfolders.addItem(s)
-            self.label_subfolder.setVisible(True)
-            self.list_subfolders.setVisible(True)
-        else:
-            self.label_subfolder.setVisible(False)
-            self.list_subfolders.setVisible(False)
+    def _on_tree_selection_changed(self):
+        items = self.tree_dirs.selectedItems()
+        self.selected_target_dir = items[0].data(0, Qt.ItemDataRole.UserRole) if items else None
+        self._update_nav()
 
     # -- Pàgina 2: Transcripció --
 
@@ -205,30 +190,20 @@ class WizardTranscripcio(QDialog):
 
     def _update_confirm(self):
         lines = len(self.transcript_editor.get_text().splitlines()) if self.transcript_editor.get_text() else 0
-        subfolder_text = f"\nSubcarpeta: {self.selected_subfolder}" if self.selected_subfolder else ""
+        try:
+            dir_text = str(self.selected_target_dir.relative_to(self.obsidian.vault))
+        except ValueError:
+            dir_text = str(self.selected_target_dir)
         self.confirm_label.setText(
             f"Reunió: {self.selected_reunio['title']}\n"
             f"Data: {self.selected_reunio['start'].strftime('%d/%m/%Y %H:%M')}\n"
-            f"Tipus: {self.selected_type}\n"
-            f"{subfolder_text}\n"
+            f"Directori: {dir_text}\n"
             f"Línies: {lines}"
         )
 
     # -- Navegació --
 
     def _make_page(self, layout):
-        container = QVBoxLayout()
-        w = self._page_widget(layout)
-        return w
-
-    def _page_widget(self, layout):
-        from PySide6.QtWidgets import QWidget
-        w = QWidget()
-        w.setLayout(layout)
-        return w
-
-    def _make_page(self, layout):
-        from PySide6.QtWidgets import QWidget
         w = QWidget()
         w.setLayout(layout)
         return w
@@ -246,46 +221,22 @@ class WizardTranscripcio(QDialog):
         idx = self._current_page()
 
         if idx == 0:
-            # Validar selecció reunió
             rows = self.table_meetings.selectionModel().selectedRows()
             if not rows:
                 return
-            row = rows[0].row()
-            self.selected_reunio = self.reunions[row]
-            self._populate_types()
+            self.selected_reunio = self.reunions[rows[0].row()]
+            self._populate_tree()
 
         elif idx == 1:
-            # Validar selecció tipus
-            type_row = self.list_types.currentRow()
-            if type_row < 0:
+            if self.selected_target_dir is None:
                 return
-            type_name = self.list_types.item(type_row).text()
-
-            needs_subfolder = type_name in TYPES_WITH_SUBFOLDER or type_name == 'Seguiment puntual'
-            if needs_subfolder:
-                sub_row = self.list_subfolders.currentRow()
-                if sub_row < 0:
-                    QMessageBox.warning(self, "Atenció", "Selecciona una subcarpeta.")
-                    return
-                self.selected_subfolder = self.list_subfolders.item(sub_row).text()
-            else:
-                self.selected_subfolder = None
-
-            if type_name == 'Seguiment puntual':
-                self.selected_subtype = 'puntual'
-                self.selected_type = 'Seguiment'
-            else:
-                self.selected_subtype = None
-                self.selected_type = type_name
 
         elif idx == 2:
-            # Validar transcripció
             if not self.transcript_editor.get_text():
                 return
             self._update_confirm()
 
         elif idx == 3:
-            # Pàgina confirmació: desar
             self._save()
             return
 
@@ -295,25 +246,20 @@ class WizardTranscripcio(QDialog):
     def _update_nav(self):
         idx = self._current_page()
         self.btn_back.setEnabled(idx > 0)
+        self.btn_next.setText("Desar" if idx == 3 else "Endavant")
 
-        if idx == 3:
-            self.btn_next.setText("Desar")
-        else:
-            self.btn_next.setText("Endavant")
-
-        # Desactivar Endavant si no hi ha text a la pàgina de transcripció
-        if idx == 2:
+        if idx == 1:
+            self.btn_next.setEnabled(self.selected_target_dir is not None)
+        elif idx == 2:
             self.btn_next.setEnabled(bool(self.transcript_editor.get_text()))
         else:
             self.btn_next.setEnabled(True)
 
     def _save(self):
-        success = self.obsidian.create_meeting_note(
+        success = self.obsidian.create_simple_note(
             self.selected_reunio,
             self.transcript_editor.get_text(),
-            self.selected_type,
-            self.selected_subfolder,
-            self.selected_subtype
+            self.selected_target_dir
         )
         if success:
             ret = QMessageBox.question(
@@ -330,13 +276,10 @@ class WizardTranscripcio(QDialog):
 
     def _reset(self):
         self.selected_reunio = None
-        self.selected_type = None
-        self.selected_subfolder = None
-        self.selected_subtype = None
+        self.selected_target_dir = None
         self.transcript_editor.clear()
         self.table_meetings.clearSelection()
-        self.list_types.clear()
-        self.list_subfolders.clear()
+        self.tree_dirs.clear()
         self.stack.setCurrentIndex(0)
         self._update_nav()
         self._load_meetings()
