@@ -84,19 +84,18 @@ class StateFileUpdater:
             lines = self._insert_topic_updates(lines, result.updated_topics, date_label)
 
         lines, old_altres = self._update_other_topics(lines, result.new_other_topics)
-        if old_altres:
-            self._append_to_historic(estat_path.parent / 'Històric.md', old_altres, date_label)
 
         Path(estat_path).write_text('\n'.join(lines) + '\n', encoding='utf-8')
-        self._archive_closed_topics(estat_path, date_label)
+        closed_topics = self._extract_and_remove_closed_topics(estat_path, date_label)
+        self._write_to_historic(estat_path.parent / 'Històric.md', date_label, closed_topics, old_altres)
 
-    def _archive_closed_topics(self, estat_path: Path, date_label: str):
-        """Arxiva a Històric.md els temes ### l'última línia dels quals acaba amb 'Tancat'."""
+    def _extract_and_remove_closed_topics(self, estat_path: Path, date_label: str) -> list[tuple[str, list[str]]]:
+        """Elimina de Estat actual.md els temes ### que contenen 'Tancat' al títol i els retorna."""
         content = Path(estat_path).read_text(encoding='utf-8')
         lines = content.splitlines()
 
         preamble = []
-        topics = []       # list of (header_line, content_lines)
+        topics = []
         tail = []
         current_header = None
         current_content = []
@@ -125,14 +124,11 @@ class StateFileUpdater:
         if current_header is not None:
             topics.append((current_header, current_content))
 
-        closed = [(h, c) for h, c in topics
-                  if 'Tancat' in h]
-
+        closed = [(h, c) for h, c in topics if 'Tancat' in h]
         if not closed:
-            return
+            return []
 
         open_topics = [(h, c) for h, c in topics if (h, c) not in closed]
-
         new_lines = preamble[:]
         for header, cont in open_topics:
             new_lines.append(header)
@@ -140,13 +136,23 @@ class StateFileUpdater:
         new_lines.extend(tail)
         Path(estat_path).write_text('\n'.join(new_lines) + '\n', encoding='utf-8')
 
-        historic_path = estat_path.parent / 'Històric.md'
+        return closed
+
+    def _write_to_historic(self, historic_path: Path, date_label: str,
+                           closed_topics: list[tuple[str, list[str]]], altres: list[str]):
+        """Escriu temes tancats i altres temes en un únic bloc datat a Històric.md."""
+        if not closed_topics and not altres:
+            return
+
         existing = historic_path.read_text(encoding='utf-8') if historic_path.exists() else ''
-        block = f'\n## Reunió {date_label}\n'
-        for header, cont in closed:
+        block = f'\n## {date_label}\n'
+        for header, cont in closed_topics:
             block += header + '\n'
             if cont:
                 block += '\n'.join(cont) + '\n'
+        if altres:
+            block += '#### Altres temes\n'
+            block += '\n'.join(altres) + '\n'
         historic_path.write_text(existing + block, encoding='utf-8')
 
     def _insert_topic_updates(self, lines: list[str], updates: list[ActiveTopicUpdate], date_label: str) -> list[str]:
@@ -191,11 +197,6 @@ class StateFileUpdater:
                 continue
             new_lines.append(line)
         return new_lines, old_altres_content
-
-    def _append_to_historic(self, historic_path: Path, content: list[str], date_label: str):
-        existing = historic_path.read_text(encoding='utf-8') if historic_path.exists() else ''
-        block = f'\n## Reunió {date_label}\n' + '\n'.join(content) + '\n'
-        historic_path.write_text(existing + block, encoding='utf-8')
 
 
 def format_ordre_del_dia(result: MeetingAnalysisResult, all_topics: list[str], date_str: str) -> str:
