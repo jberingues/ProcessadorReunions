@@ -34,33 +34,70 @@ class ObsidianWriter:
 
         return True
 
-    def append_to_provider_note(self, note_path: Path, date_str: str, meeting_title: str, summary: str):
-        provider_name = note_path.parent.parent.name
-        provider_note = note_path.parent.parent / f"{provider_name}.md"
+    def _read_attendees_from_note(self, note_path: Path) -> str:
+        try:
+            import yaml
+            content = note_path.read_text(encoding='utf-8')
+            if not content.startswith('---'):
+                return ''
+            end = content.find('---', 3)
+            if end == -1:
+                return ''
+            fm = yaml.safe_load(content[3:end]) or {}
+            attendees = fm.get('attendees', [])
+            names = [a.strip('[]" ').replace('[[', '').replace(']]', '') for a in attendees]
+            return ', '.join(names)
+        except Exception:
+            return ''
+
+    def append_to_provider_note(self, note_path: Path, date_str: str, meeting_title: str, summary: str, project_dir: Path = None):
+        if project_dir is None:
+            project_dir = note_path.parent.parent
+        provider_name = project_dir.name
+        provider_note = project_dir / f"{provider_name}.md"
 
         if not provider_note.exists():
             provider_note.write_text(f"# {provider_name}\n\n", encoding='utf-8')
 
+        attendees = self._read_attendees_from_note(note_path)
+        attendees_line = f"Assistents: {attendees}\n" if attendees else ""
+
         content = provider_note.read_text(encoding='utf-8')
-        section_title = f"{date_str}_{meeting_title.replace(' ', '_')}"
+        section_title = f"{date_str}_{meeting_title.replace(' ', '_')} (reunió)"
         date_prefix = f"## {date_str}_"
 
         if date_prefix in content:
             idx = content.find(date_prefix)
             next_section = content.find('\n## ', idx + 1)
             if next_section == -1:
-                new_content = content.rstrip('\n') + f"\n\n#### Resum reunió:\n{summary}\n"
+                new_content = content.rstrip('\n') + f"\n\n{attendees_line}#### Resum reunió:\n{summary}\n"
             else:
                 new_content = (content[:next_section].rstrip('\n') +
-                               f"\n\n#### Resum reunió:\n{summary}\n\n" +
+                               f"\n\n{attendees_line}#### Resum reunió:\n{summary}\n\n" +
                                content[next_section:].lstrip('\n'))
         else:
-            new_content = content.rstrip('\n') + f"\n\n## {section_title}\n\n{summary}\n"
+            new_content = content.rstrip('\n') + f"\n\n## {section_title}\n\n{attendees_line}#### Resum reunió:\n{summary}\n"
 
         provider_note.write_text(new_content, encoding='utf-8')
 
-    def append_to_historic(self, note_path: Path, title: str, summary: str):
-        historic_path = note_path.parent.parent / 'Històric.md'
+    def append_email_to_provider_note(self, note_path: Path, date_str: str, email_title: str, summary: str, project_dir: Path = None):
+        if project_dir is None:
+            project_dir = note_path.parent.parent
+        provider_name = project_dir.name
+        provider_note = project_dir / f"{provider_name}.md"
+
+        if not provider_note.exists():
+            provider_note.write_text(f"# {provider_name}\n\n", encoding='utf-8')
+
+        content = provider_note.read_text(encoding='utf-8')
+        section_title = f"{date_str}_{email_title.replace(' ', '_')} (correu)"
+        new_content = content.rstrip('\n') + f"\n\n## {section_title}\n\n#### Resum correu:\n{summary}\n"
+        provider_note.write_text(new_content, encoding='utf-8')
+
+    def append_to_historic(self, note_path: Path, title: str, summary: str, project_dir: Path = None):
+        if project_dir is None:
+            project_dir = note_path.parent.parent
+        historic_path = project_dir / 'Històric.md'
         entry = f"\n## {title}\n\n{summary}\n"
         if not historic_path.exists():
             historic_path.parent.mkdir(parents=True, exist_ok=True)
@@ -133,6 +170,39 @@ from: "{thread['from']}"
             d.name for d in reunions_dir.iterdir()
             if d.is_dir() and d.name != 'zConfig' and not d.name.startswith('.')
         ])
+
+    def find_unprocessed_email_notes(self) -> list:
+        """Notes de correu (type: correu) sense * al stem."""
+        notes = []
+        for p in (self.vault / 'Reunions').rglob('*.md'):
+            if 'zConfig' in p.parts:
+                continue
+            if p.stem.endswith('*'):
+                continue
+            try:
+                content = p.read_text(encoding='utf-8')
+            except Exception:
+                continue
+            if not content.startswith('---'):
+                continue
+            end = content.find('---', 3)
+            if end == -1:
+                continue
+            if 'type: correu' not in content[3:end]:
+                continue
+            parts = p.stem.split('_', 1)
+            date_str = parts[0] if len(parts) > 1 and len(parts[0]) == 6 else ''
+            title = parts[1].replace('_', ' ') if len(parts) > 1 else p.stem
+            notes.append({'path': p, 'title': title, 'date': date_str})
+        return sorted(notes, key=lambda n: n['date'], reverse=True)
+
+    def read_email_body(self, path: Path) -> str:
+        """Retorna el cos del correu (contingut després del darrer --- separador)."""
+        content = path.read_text(encoding='utf-8')
+        idx = content.rfind('\n---\n')
+        if idx != -1:
+            return content[idx + 5:].strip()
+        return content
 
     def find_uncorrected_notes(self) -> list:
         """Notes sense ~ ni * (originals, no corregides)."""

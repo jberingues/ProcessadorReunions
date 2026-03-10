@@ -5,6 +5,7 @@ from obsidian_writer import ObsidianWriter
 from wizard_transcripcio import WizardTranscripcio
 from wizard_correccio import WizardCorreccio
 from wizard_processar import WizardProcessar
+from wizard_processar_correus import WizardProcessarCorreus
 from wizard_nou_projecte import WizardNouProjecte
 from wizard_correus import WizardCorreus
 from wizard_fitxers import WizardFitxers
@@ -62,6 +63,12 @@ class MainWindow(QMainWindow):
         self.btn_processar.clicked.connect(self._open_processar)
         layout.addWidget(self.btn_processar)
 
+        self.btn_processar_correus = QPushButton("Processar correus")
+        self.btn_processar_correus.setMinimumHeight(50)
+        self.btn_processar_correus.setStyleSheet("font-size: 14px;")
+        self.btn_processar_correus.clicked.connect(self._open_processar_correus)
+        layout.addWidget(self.btn_processar_correus)
+
         self.btn_processar_curt = QPushButton("Processar curt reunions")
         self.btn_processar_curt.setMinimumHeight(50)
         self.btn_processar_curt.setStyleSheet("font-size: 14px;")
@@ -74,7 +81,7 @@ class MainWindow(QMainWindow):
         self.btn_nou_projecte.clicked.connect(self._open_nou_projecte)
         layout.addWidget(self.btn_nou_projecte)
 
-        self._all_buttons = [self.btn_transcripcions, self.btn_correus, self.btn_fitxers, self.btn_correccio, self.btn_processar, self.btn_processar_curt, self.btn_nou_projecte]
+        self._all_buttons = [self.btn_transcripcions, self.btn_correus, self.btn_fitxers, self.btn_correccio, self.btn_processar, self.btn_processar_correus, self.btn_processar_curt, self.btn_nou_projecte]
 
     def _open_transcripcions(self):
         self._disable_all()
@@ -103,6 +110,12 @@ class MainWindow(QMainWindow):
     def _open_fitxers(self):
         self._disable_all()
         wizard = WizardFitxers(self.obsidian, self)
+        wizard.finished.connect(self._wizard_closed)
+        wizard.open()
+
+    def _open_processar_correus(self):
+        self._disable_all()
+        wizard = WizardProcessarCorreus(self.calendar, self.obsidian, self)
         wizard.finished.connect(self._wizard_closed)
         wizard.open()
 
