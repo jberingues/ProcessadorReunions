@@ -3,6 +3,7 @@ from PySide6.QtCore import Qt
 from calendar_matcher import CalendarMatcher
 from obsidian_writer import ObsidianWriter
 from wizard_transcripcio import WizardTranscripcio
+from wizard_correccio import WizardCorreccio
 from wizard_processar import WizardProcessar
 from wizard_nou_projecte import WizardNouProjecte
 from wizard_correus import WizardCorreus
@@ -49,11 +50,23 @@ class MainWindow(QMainWindow):
         self.btn_fitxers.clicked.connect(self._open_fitxers)
         layout.addWidget(self.btn_fitxers)
 
+        self.btn_correccio = QPushButton("Correcció transcripcions")
+        self.btn_correccio.setMinimumHeight(50)
+        self.btn_correccio.setStyleSheet("font-size: 14px;")
+        self.btn_correccio.clicked.connect(self._open_correccio)
+        layout.addWidget(self.btn_correccio)
+
         self.btn_processar = QPushButton("Processar reunions")
         self.btn_processar.setMinimumHeight(50)
         self.btn_processar.setStyleSheet("font-size: 14px;")
         self.btn_processar.clicked.connect(self._open_processar)
         layout.addWidget(self.btn_processar)
+
+        self.btn_processar_curt = QPushButton("Processar curt reunions")
+        self.btn_processar_curt.setMinimumHeight(50)
+        self.btn_processar_curt.setStyleSheet("font-size: 14px;")
+        self.btn_processar_curt.clicked.connect(self._open_processar_curt)
+        layout.addWidget(self.btn_processar_curt)
 
         self.btn_nou_projecte = QPushButton("Crear un projecte nou")
         self.btn_nou_projecte.setMinimumHeight(50)
@@ -61,7 +74,7 @@ class MainWindow(QMainWindow):
         self.btn_nou_projecte.clicked.connect(self._open_nou_projecte)
         layout.addWidget(self.btn_nou_projecte)
 
-        self._all_buttons = [self.btn_transcripcions, self.btn_correus, self.btn_fitxers, self.btn_processar, self.btn_nou_projecte]
+        self._all_buttons = [self.btn_transcripcions, self.btn_correus, self.btn_fitxers, self.btn_correccio, self.btn_processar, self.btn_processar_curt, self.btn_nou_projecte]
 
     def _open_transcripcions(self):
         self._disable_all()
@@ -90,6 +103,18 @@ class MainWindow(QMainWindow):
     def _open_fitxers(self):
         self._disable_all()
         wizard = WizardFitxers(self.obsidian, self)
+        wizard.finished.connect(self._wizard_closed)
+        wizard.open()
+
+    def _open_processar_curt(self):
+        self._disable_all()
+        wizard = WizardProcessar(self.calendar, self.obsidian, self, mode='curt')
+        wizard.finished.connect(self._wizard_closed)
+        wizard.open()
+
+    def _open_correccio(self):
+        self._disable_all()
+        wizard = WizardCorreccio(self.obsidian, self)
         wizard.finished.connect(self._wizard_closed)
         wizard.open()
 

@@ -134,6 +134,43 @@ from: "{thread['from']}"
             if d.is_dir() and d.name != 'zConfig' and not d.name.startswith('.')
         ])
 
+    def find_uncorrected_notes(self) -> list:
+        """Notes sense ~ ni * (originals, no corregides)."""
+        notes = []
+        for p in (self.vault / 'Reunions').rglob('*.md'):
+            if 'zConfig' in p.parts:
+                continue
+            if p.parent.name != 'Reunions':
+                continue
+            if not p.stem.endswith('~') and not p.stem.endswith('*'):
+                parts = p.stem.split('_', 1)
+                date_str = parts[0] if len(parts[0]) == 6 else ''
+                title = parts[1].replace('_', ' ') if len(parts) > 1 else p.stem
+                notes.append({'path': p, 'title': title, 'date': date_str})
+        return sorted(notes, key=lambda n: n['date'], reverse=True)
+
+    def mark_as_corrected(self, path: Path) -> Path:
+        """Afegeix ~ al stem per indicar que la transcripció ha estat corregida."""
+        new_path = path.with_stem(path.stem + '~')
+        path.rename(new_path)
+        return new_path
+
+    def find_corrected_notes(self) -> list:
+        """Notes amb ~ al stem (corregides, pendents de processar)."""
+        notes = []
+        for p in (self.vault / 'Reunions').rglob('*.md'):
+            if 'zConfig' in p.parts:
+                continue
+            if p.parent.name != 'Reunions':
+                continue
+            if p.stem.endswith('~'):
+                stem = p.stem[:-1]
+                parts = stem.split('_', 1)
+                date_str = parts[0] if len(parts[0]) == 6 else ''
+                title = parts[1].replace('_', ' ') if len(parts) > 1 else stem
+                notes.append({'path': p, 'title': title, 'date': date_str})
+        return sorted(notes, key=lambda n: n['date'], reverse=True)
+
     def find_unprocessed_notes(self) -> list:
         notes = []
         for p in (self.vault / 'Reunions').rglob('*.md'):
@@ -166,7 +203,12 @@ from: "{thread['from']}"
         path.write_text(new_content, encoding='utf-8')
 
     def mark_as_processed(self, path: Path) -> Path:
-        new_path = path.with_stem(path.stem + '*')
+        stem = path.stem
+        if stem.endswith('~'):
+            new_stem = stem[:-1] + '*'
+        else:
+            new_stem = stem + '*'
+        new_path = path.with_stem(new_stem)
         path.rename(new_path)
         return new_path
 

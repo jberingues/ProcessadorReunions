@@ -8,27 +8,25 @@ from PySide6.QtWidgets import (
     QProgressBar, QPlainTextEdit, QMessageBox, QHeaderView
 )
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont, QFontDatabase
+from PySide6.QtGui import QFontDatabase
 from vocabulary_loader import VocabularyLoader
-from transcript_corrector import TranscriptCorrector
 from workers import (
-    CorrectionDetectWorker, DailyProcessorWorker,
+    DailyProcessorWorker,
     MeetingAnalyzerWorker, SummaryWorker
 )
-from widgets.inline_correction_editor import InlineCorrectionEditor
 
 
 class WizardProcessar(QDialog):
-    def __init__(self, calendar, obsidian, parent=None):
+    def __init__(self, calendar, obsidian, parent=None, mode='normal'):
         super().__init__(parent)
         self.calendar = calendar
         self.obsidian = obsidian
-        self.setWindowTitle("Processar reunions")
+        self.mode = mode
+        self.setWindowTitle("Processar curt reunions" if mode == 'curt' else "Processar reunions")
         self.setMinimumSize(750, 550)
 
         self.notes = []
         self.selected_note = None
-        self.corrector = None
         self.corrected_transcript = None
         self.processing_result = None
         self.processing_markdown = None
@@ -53,9 +51,8 @@ class WizardProcessar(QDialog):
         layout.addLayout(nav)
 
         self._build_page0_notes()
-        self._build_page1_corrections()
-        self._build_page2_processing()
-        self._build_page3_result()
+        self._build_page1_processing()
+        self._build_page2_result()
 
         self._update_nav()
         self._load_notes()
@@ -68,7 +65,8 @@ class WizardProcessar(QDialog):
         w = QWidget()
         w.setLayout(page)
 
-        page.addWidget(QLabel("Reunions per processar:"))
+        label_text = "Reunions de Seguiment corregides per processar:" if self.mode == 'curt' else "Reunions corregides per processar:"
+        page.addWidget(QLabel(label_text))
 
         self.table_notes = QTableWidget()
         self.table_notes.setColumnCount(2)
@@ -83,102 +81,18 @@ class WizardProcessar(QDialog):
         self.stack.addWidget(w)
 
     def _load_notes(self):
-        self.notes = self.obsidian.find_unprocessed_notes()
+        notes = self.obsidian.find_corrected_notes()
+        if self.mode == 'curt':
+            notes = [n for n in notes if 'Seguiment' in n['path'].parts]
+        self.notes = notes
         self.table_notes.setRowCount(len(self.notes))
         for i, n in enumerate(self.notes):
             self.table_notes.setItem(i, 0, QTableWidgetItem(n['date']))
             self.table_notes.setItem(i, 1, QTableWidgetItem(n['title']))
 
-    # -- Pàgina 1: Correccions --
+    # -- Pàgina 1: Processament específic --
 
-    def _build_page1_corrections(self):
-        from PySide6.QtWidgets import QWidget
-        page = QVBoxLayout()
-        w = QWidget()
-        w.setLayout(page)
-
-        self.label_corrections = QLabel("Analitzant transcripció...")
-        page.addWidget(self.label_corrections)
-
-        self.progress_corrections = QProgressBar()
-        self.progress_corrections.setRange(0, 0)
-        page.addWidget(self.progress_corrections)
-
-        # L'InlineCorrectionEditor s'afegeix aquí dinàmicament
-        self._corrections_page_layout = page
-        self.inline_editor: InlineCorrectionEditor | None = None
-
-        self.stack.addWidget(w)
-
-    def _start_correction(self):
-        self.label_corrections.setText("Analitzant transcripció...")
-        self.progress_corrections.setVisible(True)
-        self.btn_next.setEnabled(False)
-
-        # Netejar editor anterior
-        if self.inline_editor:
-            self.inline_editor.setParent(None)
-            self.inline_editor.deleteLater()
-            self.inline_editor = None
-
-        note = self.selected_note
-        vocab_path = self.obsidian.vault / 'Reunions' / 'zConfig' / 'Vocabulari.md'
-        vocab = VocabularyLoader(vocab_path).load()
-        memorized_path = self.obsidian.vault / 'Reunions' / 'zConfig' / 'Canvis-Memoritzats.md'
-
-        # Buscar transcripció de referència
-        reference_transcript = None
-        processed_siblings = sorted(
-            [p for p in note['path'].parent.glob('*.md') if '*' in p.stem],
-            key=lambda p: p.stem[:6],
-            reverse=True
-        )
-        if processed_siblings:
-            reference_transcript = self.obsidian.read_transcript(processed_siblings[0])
-
-        transcript = self.obsidian.read_transcript(note['path'])
-        self.corrector = TranscriptCorrector(vocab, memorized_path=memorized_path)
-
-        self.worker_corrections = CorrectionDetectWorker(
-            self.corrector, transcript, reference_transcript, self
-        )
-        self.worker_corrections.finished.connect(self._on_corrections_detected)
-        self.worker_corrections.error.connect(self._on_corrections_error)
-        self.worker_corrections.start()
-
-    def _on_corrections_detected(self, transcript, corrections):
-        self.progress_corrections.setVisible(False)
-
-        if corrections:
-            self.label_corrections.setText(
-                f"{len(corrections)} correccions detectades. "
-                "Revisa i edita el text lliurement:"
-            )
-        else:
-            self.label_corrections.setText("Cap correcció detectada. Pots editar el text lliurement:")
-
-        self.inline_editor = InlineCorrectionEditor(transcript, corrections)
-        self._corrections_page_layout.addWidget(self.inline_editor)
-        self.btn_next.setEnabled(True)
-
-    def _on_corrections_error(self, msg):
-        self.progress_corrections.setVisible(False)
-        self.label_corrections.setText(f"Error: {msg}")
-        self.btn_next.setEnabled(True)
-
-    def _apply_corrections(self):
-        """Agafa el text final de l'editor (ja amb les correccions aplicades inline) i memoritza."""
-        if self.inline_editor:
-            self.corrected_transcript = self.inline_editor.get_final_text()
-            for c in self.inline_editor.get_memorize_list():
-                self.corrector.save_memorized(c['original'], c['correccio'])
-
-        # Actualitzar la nota amb la transcripció corregida
-        self.obsidian.update_transcript(self.selected_note['path'], self.corrected_transcript)
-
-    # -- Pàgina 2: Processament específic --
-
-    def _build_page2_processing(self):
+    def _build_page1_processing(self):
         from PySide6.QtWidgets import QWidget
         page = QVBoxLayout()
         w = QWidget()
@@ -206,6 +120,7 @@ class WizardProcessar(QDialog):
         self.btn_next.setText("Confirmar")
 
         note = self.selected_note
+        self.corrected_transcript = self.obsidian.read_transcript(note['path'])
         path_parts = note['path'].parts
 
         if 'Sincronització' in path_parts:
@@ -307,7 +222,7 @@ class WizardProcessar(QDialog):
         analyzer = MeetingAnalyzer()
 
         self.worker_processing = MeetingAnalyzerWorker(
-            analyzer, topics, self.corrected_transcript, self
+            analyzer, topics, self.corrected_transcript, self, brief=(self.mode == 'curt')
         )
         self.worker_processing.finished.connect(self._on_seguiment_finished)
         self.worker_processing.error.connect(self._on_processing_error)
@@ -427,9 +342,9 @@ class WizardProcessar(QDialog):
         new_path = self.obsidian.mark_as_processed(self.selected_note['path'])
         self._result_filename = new_path.name
 
-    # -- Pàgina 3: Resultat --
+    # -- Pàgina 2: Resultat --
 
-    def _build_page3_result(self):
+    def _build_page2_result(self):
         from PySide6.QtWidgets import QWidget
         page = QVBoxLayout()
         w = QWidget()
@@ -466,20 +381,12 @@ class WizardProcessar(QDialog):
             self.selected_note = self.notes[row]
             self.stack.setCurrentIndex(1)
             self._update_nav()
-            self._start_correction()
-            return
-
-        elif idx == 1:
-            self._apply_corrections()
-            self.stack.setCurrentIndex(2)
-            self._update_nav()
             self._start_processing()
             return
 
-        elif idx == 2:
+        elif idx == 1:
             ptype = getattr(self, '_processing_type', None)
             if ptype is None:
-                # No processing needed, skip to result
                 self._result_filename = self.selected_note['path'].name
                 self.obsidian.mark_as_processed(self.selected_note['path'])
             else:
@@ -489,12 +396,11 @@ class WizardProcessar(QDialog):
                 f"Nota processada correctament!\n\n"
                 f"{getattr(self, '_result_filename', '')}"
             )
-            self.stack.setCurrentIndex(3)
+            self.stack.setCurrentIndex(2)
             self._update_nav()
             return
 
-        elif idx == 3:
-            # "Processar una altra" o tancar
+        elif idx == 2:
             ret = QMessageBox.question(
                 self, "Continuar?",
                 "Vols processar una altra reunió?",
@@ -508,11 +414,11 @@ class WizardProcessar(QDialog):
 
     def _update_nav(self):
         idx = self._current_page()
-        self.btn_back.setEnabled(idx > 0 and idx < 3)
+        self.btn_back.setEnabled(idx == 1)
 
-        if idx == 2:
+        if idx == 1:
             self.btn_next.setText("Confirmar")
-        elif idx == 3:
+        elif idx == 2:
             self.btn_next.setText("Tancar")
             self.btn_back.setEnabled(False)
         else:
@@ -520,16 +426,10 @@ class WizardProcessar(QDialog):
 
     def _reset(self):
         self.selected_note = None
-        self.corrector = None
         self.corrected_transcript = None
         self.processing_result = None
         self.processing_markdown = None
         self._processing_type = None
-
-        if self.inline_editor:
-            self.inline_editor.setParent(None)
-            self.inline_editor.deleteLater()
-            self.inline_editor = None
 
         self.result_text.clear()
         self.table_notes.clearSelection()

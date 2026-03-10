@@ -1,6 +1,6 @@
 import base64
 import email.utils
-from datetime import datetime
+from datetime import datetime, timedelta
 
 
 class GmailFetcher:
@@ -22,7 +22,8 @@ class GmailFetcher:
         label_id = self._get_label_id()
         if not label_id:
             return []
-        q = f"after:{date_from.strftime('%Y/%m/%d')} before:{date_to.strftime('%Y/%m/%d')}"
+        date_to_exclusive = date_to + timedelta(days=1)
+        q = f"after:{date_from.strftime('%Y/%m/%d')} before:{date_to_exclusive.strftime('%Y/%m/%d')}"
         result = self.gmail.users().threads().list(
             userId='me', labelIds=[label_id], q=q
         ).execute()

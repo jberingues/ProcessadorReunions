@@ -80,15 +80,16 @@ class MeetingAnalyzerWorker(QThread):
     finished = Signal(object)
     error = Signal(str)
 
-    def __init__(self, analyzer, topics, transcript, parent=None):
+    def __init__(self, analyzer, topics, transcript, parent=None, brief=False):
         super().__init__(parent)
         self.analyzer = analyzer
         self.topics = topics
         self.transcript = transcript
+        self.brief = brief
 
     def run(self):
         try:
-            result = self.analyzer.analyze(self.topics, self.transcript)
+            result = self.analyzer.analyze(self.topics, self.transcript, brief=self.brief)
             self.finished.emit(result)
         except Exception as e:
             self.error.emit(str(e))

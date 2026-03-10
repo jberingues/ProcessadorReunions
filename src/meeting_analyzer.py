@@ -22,7 +22,7 @@ def parse_active_topics(estat_path: Path) -> list[str]:
     for line in content.splitlines():
         if re.match(r'^#{1,6} Altres temes', line):
             break
-        match = re.match(r'^### (.+)$', line)
+        match = re.match(r'^#{2,6} (.+)$', line)
         if match:
             topics.append(match.group(1).strip())
     return topics
@@ -32,8 +32,13 @@ class MeetingAnalyzer:
     def __init__(self, model: str = None):
         self.llm = LLM(model=model or os.getenv('LLM_MODELH'), drop_params=True)
 
-    def analyze(self, topics: list[str], transcript: str) -> MeetingAnalysisResult:
+    def analyze(self, topics: list[str], transcript: str, brief: bool = False) -> MeetingAnalysisResult:
         topics_list = '\n'.join(f'- {t}' for t in topics)
+        summary_instruction = (
+            "escriu un resum de màxim 2 línies del que s'ha dit."
+            if brief else
+            "escriu un resum de 3-4 línies del que s'ha dit, incloent decisions preses, estat actual i propers passos si s'han mencionat."
+        )
 
         agent = Agent(
             role="Analista de reunions de seguiment",
@@ -54,7 +59,7 @@ TRANSCRIPCIÓ:
 {transcript}
 
 INSTRUCCIONS:
-- Per cada tema obert que s'hagi tractat a la reunió, escriu un resum de 3-4 línies del que s'ha dit, incloent decisions preses, estat actual i propers passos si s'han mencionat.
+- Per cada tema obert que s'hagi tractat a la reunió, {summary_instruction}
 - Només resumeix el que s'ha dit, no inventis.
 - Si un tema no s'ha tractat, NO l'incloguis a updated_topics.
 - Si s'han tractat temes nous que no estan a la llista de temes oberts, afegeix-los a new_other_topics amb una descripció breu.
@@ -161,7 +166,7 @@ class StateFileUpdater:
         i = 0
         while i < len(lines):
             new_lines.append(lines[i])
-            match = re.match(r'^### (.+)$', lines[i])
+            match = re.match(r'^#{2,6} (.+)$', lines[i])
             if match:
                 topic = match.group(1).strip()
                 if topic in updates_by_name:
