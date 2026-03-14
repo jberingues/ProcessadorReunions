@@ -122,8 +122,17 @@ class WizardCorreccio(QDialog):
         transcript = self.obsidian.read_transcript(note['path'])
         self.corrector = TranscriptCorrector(vocab, memorized_path=memorized_path)
 
+        # Memòria semàntica (sèries de reunions: Seguiment, Proveïdors, etc.)
+        semantic_context = None
+        meeting_dir = note['path'].parent.parent  # .../Seguiment_Pau_Coll/
+        if meeting_dir.name != 'Reunions':
+            from semantic_memory_builder import SemanticMemoryBuilder
+            from semantic_context_retriever import SemanticContextRetriever
+            SemanticMemoryBuilder().build_if_stale(meeting_dir)
+            semantic_context = SemanticContextRetriever().load(meeting_dir)
+
         self.worker_corrections = CorrectionDetectWorker(
-            self.corrector, transcript, reference_transcript, self
+            self.corrector, transcript, reference_transcript, semantic_context, self
         )
         self.worker_corrections.finished.connect(self._on_corrections_detected)
         self.worker_corrections.error.connect(self._on_corrections_error)

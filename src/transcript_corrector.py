@@ -11,7 +11,7 @@ class TranscriptCorrector:
         self.memorized_path = Path(memorized_path) if memorized_path else None
         self.llm = LLM(model=model or os.getenv('LLM_MODELH'), drop_params=True)
 
-    def detect(self, transcript: str, reference_transcript: str = None) -> tuple[str, list[dict]]:
+    def detect(self, transcript: str, reference_transcript: str = None, semantic_context=None) -> tuple[str, list[dict]]:
         """Aplica correccions memoritzades i detecta nous errors amb LLM.
 
         Returns:
@@ -27,6 +27,22 @@ class TranscriptCorrector:
 
         # 2. LLM detecta nous errors
         vocab_text = self._format_vocab()
+
+        semantic_section = ''
+        if semantic_context and (semantic_context.aliases or semantic_context.topic_context):
+            alias_lines = '\n'.join(
+                f'- "{w}" s\'ha de corregir a "{c}"'
+                for w, c in semantic_context.aliases.items()
+            )
+            semantic_section = f"""
+MEMÒRIA SEMÀNTICA D'AQUESTA SÈRIE DE REUNIONS:
+Projectes habituals: {', '.join(semantic_context.relevant_projects) or 'cap'}
+Temes recurrents: {', '.join(semantic_context.topic_context) or 'cap'}
+
+CORRECCIONS APRESES (errors fonètics ja confirmats per a aquesta sèrie):
+{alias_lines}
+"""
+
         ref_section = ''
         if reference_transcript:
             ref_section = f"""
@@ -52,8 +68,8 @@ TASCA: Revisa la transcripció i detecta TOTES les paraules o frases que probabl
 
 VOCABULARI DE L'EMPRESA:
 {vocab_text}
-{ref_section}
-TRANSCRIPCIÓ:
+{semantic_section}
+{ref_section}TRANSCRIPCIÓ:
 {transcript}
 
 Per cada possible error, indica:

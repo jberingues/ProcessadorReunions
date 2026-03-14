@@ -38,17 +38,20 @@ class CorrectionDetectWorker(QThread):
     finished = Signal(str, list)
     error = Signal(str)
 
-    def __init__(self, corrector, transcript, reference_transcript=None, parent=None):
+    def __init__(self, corrector, transcript, reference_transcript=None,
+                 semantic_context=None, parent=None):
         super().__init__(parent)
         self.corrector = corrector
         self.transcript = transcript
         self.reference_transcript = reference_transcript
+        self.semantic_context = semantic_context
 
     def run(self):
         try:
             transcript, corrections = self.corrector.detect(
                 self.transcript,
-                reference_transcript=self.reference_transcript
+                reference_transcript=self.reference_transcript,
+                semantic_context=self.semantic_context
             )
             self.finished.emit(transcript, corrections)
         except Exception as e:
