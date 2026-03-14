@@ -131,7 +131,7 @@ class SummaryWorker(QThread):
                         "Analitza el text següent i fes un resum estructurat en català.\n"
                         "Per cada tema diferent que s'hagi tractat:\n"
                         "1. Posa un titular amb el format exacte: ##### Nom del tema\n"
-                        "2. Sota el titular, afegeix màxim 3 bullets (-) amb els punts més importants. Ni més ni menys.\n"
+                        "2. Sota el titular, afegeix un resum de màxim 3 bullets (-) amb els punts més importants.\n"
                         "Detecta els temes de forma natural a partir del contingut.\n"
                         "Sense introducció ni conclusió. Sense línies buides entre temes.\n\n"
                         f"{self.transcript}"
