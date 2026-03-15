@@ -219,9 +219,15 @@ class InlineCorrectionEditor(QWidget):
         if 0 <= self._current < n:
             c = self._corrections[self._current]
             motiu = c.get('motiu', '')
+            confiança = c.get('confiança')
             text = f'"{c["original"]}"  →  "{c["correccio"]}"'
+            parts = []
+            if confiança is not None:
+                parts.append(f'confiança: {confiança:.0%}')
             if motiu:
-                text += f'  ({motiu})'
+                parts.append(motiu)
+            if parts:
+                text += f'  ({", ".join(parts)})'
             self.lbl_correction.setText(text)
 
             status = c['status']
