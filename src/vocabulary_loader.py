@@ -5,6 +5,16 @@ class VocabularyLoader:
     def __init__(self, vocab_path: Path):
         self.path = Path(vocab_path)
 
+    def load_config(self) -> dict:
+        """Retorna claus de la secció '## Configuració' com a dict str→str."""
+        vocab = self.load()
+        config = {}
+        for item in vocab.get('Configuració', []):
+            if ':' in item:
+                k, _, v = item.partition(':')
+                config[k.strip()] = v.strip()
+        return config
+
     def load(self) -> dict:
         if not self.path.exists():
             return {}

@@ -6,10 +6,12 @@ from json_repair import repair_json
 
 
 class TranscriptCorrector:
-    def __init__(self, vocab: dict, memorized_path: Path = None, model: str = None):
+    def __init__(self, vocab: dict, memorized_path: Path = None, model: str = None,
+                 threshold_auto: float = 0.85):
         self.vocab = vocab
         self.memorized_path = Path(memorized_path) if memorized_path else None
         self.llm = LLM(model=model or os.getenv('LLM_MODELH'), drop_params=True)
+        self.threshold_auto = threshold_auto
 
     def detect(self, transcript: str, reference_transcript: str = None, semantic_context=None) -> tuple[str, list[dict]]:
         """Aplica correccions memoritzades i detecta nous errors amb LLM.
@@ -77,12 +79,17 @@ Per cada possible error, indica:
 - "correccio": el terme correcte del vocabulari
 - "motiu": breu explicació de la similitud fonètica o per què no té sentit en context
 - "frase": la frase sencera de la transcripció on apareix l'error (per donar context)
+- "confiança": valor entre 0.0 i 1.0 que reflecteix la certesa que és un error. Guia:
+    * 0.9–1.0: terme exactament al vocabulari, similitud fonètica clara i inequívoca, sense ambigüitat semàntica possible
+    * 0.7–0.89: probable error fonètic però podria ser una paraula legítima en algun context
+    * 0.5–0.69: possible error però ambigu; el mot té sentit per si sol en català/castellà
+    * < 0.5: especulatiu; no usar
 
 Retorna ÚNICAMENT un array JSON (sense cap text addicional):
-[{{"original": "...", "correccio": "...", "motiu": "...", "frase": "..."}}]
+[{{"original": "...", "correccio": "...", "motiu": "...", "frase": "...", "confiança": 0.95}}]
 Si no hi ha errors, retorna [].
             """,
-            expected_output="Array JSON de correccions",
+            expected_output="Array JSON de correccions amb camp 'confiança'",
             agent=agent
         )
 

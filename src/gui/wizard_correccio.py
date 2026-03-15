@@ -149,7 +149,10 @@ class WizardCorreccio(QDialog):
         selected_notes = [self.notes[r] for r in selected_rows]
 
         vocab_path = self.obsidian.vault / 'Reunions' / 'zConfig' / 'Vocabulari.md'
-        vocab = VocabularyLoader(vocab_path).load()
+        loader = VocabularyLoader(vocab_path)
+        vocab = loader.load()
+        config = loader.load_config()
+        threshold_auto = float(config.get('threshold_auto', '0.85'))
         memorized_path = self.obsidian.vault / 'Reunions' / 'zConfig' / 'Canvis-Memoritzats.md'
 
         self.batch_results.clear()
@@ -160,7 +163,8 @@ class WizardCorreccio(QDialog):
         self.progress_batch.setValue(0)
 
         for idx, note in enumerate(selected_notes):
-            corrector = TranscriptCorrector(vocab, memorized_path=memorized_path)
+            corrector = TranscriptCorrector(vocab, memorized_path=memorized_path,
+                                           threshold_auto=threshold_auto)
             transcript = self.obsidian.read_transcript(note['path'])
 
             reference_transcript = None
