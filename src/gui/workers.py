@@ -58,6 +58,37 @@ class CorrectionDetectWorker(QThread):
             self.error.emit(str(e))
 
 
+class BatchCorrectionDetectWorker(QThread):
+    note_started = Signal(int)
+    note_finished = Signal(int, str, list)
+    note_error = Signal(int, str)
+    all_finished = Signal()
+
+    def __init__(self, tasks: list, parent=None):
+        super().__init__(parent)
+        self.tasks = tasks
+        self._abort = False
+
+    def abort(self):
+        self._abort = True
+
+    def run(self):
+        for task in self.tasks:
+            if self._abort:
+                break
+            self.note_started.emit(task['index'])
+            try:
+                transcript, corrections = task['corrector'].detect(
+                    task['transcript'],
+                    reference_transcript=task['reference_transcript'],
+                    semantic_context=task['semantic_context']
+                )
+                self.note_finished.emit(task['index'], transcript, corrections)
+            except Exception as e:
+                self.note_error.emit(task['index'], str(e))
+        self.all_finished.emit()
+
+
 class DailyProcessorWorker(QThread):
     finished = Signal(object, str)
     error = Signal(str)
