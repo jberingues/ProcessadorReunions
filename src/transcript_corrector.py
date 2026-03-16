@@ -85,6 +85,9 @@ Per cada possible error, indica:
     * 0.5–0.69: possible error però ambigu; el mot té sentit per si sol en català/castellà
     * < 0.5: especulatiu; no usar
 
+IMPORTANT: No proposis cap correcció si el terme correcte del vocabulari ja apareix literalment a la transcripció. Per exemple, si "OTC" ja és al text, no cal proposar canviar "TC" per "OTC".
+IMPORTANT: L'"original" ha de ser sempre una paraula o frase sencera, mai una part d'una paraula. Per exemple, si veus "acabo", no proposis corregir "cabo" perquè és una subcadena d'una paraula més llarga.
+
 Retorna ÚNICAMENT un array JSON (sense cap text addicional):
 [{{"original": "...", "correccio": "...", "motiu": "...", "frase": "...", "confiança": 0.95}}]
 Si no hi ha errors, retorna [].
@@ -101,12 +104,25 @@ Si no hi ha errors, retorna [].
         if not isinstance(corrections, list):
             corrections = []
 
+        # Filtrar correccions on l'original és sempre subcadena d'una paraula més llarga
+        def is_whole_word(word, text):
+            return bool(re.search(r'(?<!\w)' + re.escape(word) + r'(?!\w)', text))
+
+        corrections = [
+            c for c in corrections
+            if isinstance(c, dict) and 'original' in c and is_whole_word(c['original'], transcript)
+        ]
+
         return transcript, corrections
 
     def apply(self, transcript: str, corrections: list[dict]) -> str:
         """Aplica les correccions aprovades a la transcripció."""
         for c in corrections:
-            transcript = transcript.replace(c['original'], c['correccio'])
+            transcript = re.sub(
+                r'(?<!\w)' + re.escape(c['original']) + r'(?!\w)',
+                c['correccio'],
+                transcript
+            )
         return transcript
 
     def save_memorized(self, original: str, correccio: str):

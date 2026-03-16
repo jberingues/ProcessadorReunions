@@ -311,7 +311,10 @@ class WizardCorreccio(QDialog):
             self.inline_editor = None
 
         self.lbl_review_title.setText(f"{result.note['date']} — {result.note['title']}")
-        self.inline_editor = InlineCorrectionEditor(result.transcript, result.corrections)
+        threshold = result.corrector.threshold_auto if result.corrector else 1.1
+        self.inline_editor = InlineCorrectionEditor(
+            result.transcript, result.corrections, threshold_auto=threshold
+        )
         self._review_page_layout.insertWidget(1, self.inline_editor)
 
         self.stack.setCurrentIndex(2)

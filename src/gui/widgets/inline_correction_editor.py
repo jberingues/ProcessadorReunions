@@ -33,7 +33,8 @@ class InlineCorrectionEditor(QWidget):
     _COL_ACCEPTED = QColor('white')
     _COL_REJECTED = QColor('white')
 
-    def __init__(self, transcript: str, corrections: list[dict], parent=None):
+    def __init__(self, transcript: str, corrections: list[dict], parent=None,
+                 threshold_auto: float = 1.1):
         super().__init__(parent)
         self._corrections = [dict(c, status='pending') for c in corrections]
         self._memorized: list[dict] = []
@@ -57,8 +58,28 @@ class InlineCorrectionEditor(QWidget):
         self._timer.timeout.connect(self._update_highlights)
 
         if corrections:
+            self._auto_accept_high_confidence(threshold_auto)
+            # Posicionar-se a la primera pendent
+            first_pending = next(
+                (i for i, c in enumerate(self._corrections) if c['status'] == 'pending'),
+                0
+            )
+            self._current = first_pending
             self.editor.textChanged.connect(lambda: self._timer.start())
             self._refresh()
+
+    # ── Auto-acceptació ──────────────────────────────────────────────────────
+
+    def _auto_accept_high_confidence(self, threshold: float):
+        """Accepta automàticament les correccions amb confiança >= threshold."""
+        for c in self._corrections:
+            if c.get('confiança', 0) >= threshold:
+                cursor = self.editor.document().find(c['original'])
+                if not cursor.isNull():
+                    cursor.insertText(c['correccio'])
+                    c['status'] = 'accepted'
+                else:
+                    c['status'] = 'not_found'
 
     # ── Nav bar (3 files) ────────────────────────────────────────────────────
 
