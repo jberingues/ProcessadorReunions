@@ -1,6 +1,6 @@
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTextEdit,
-    QPushButton, QLabel, QCheckBox
+    QPushButton, QLabel, QCheckBox, QLineEdit
 )
 from PySide6.QtGui import QTextCharFormat, QColor, QFont, QTextCursor, QFontDatabase
 from PySide6.QtCore import Qt, QTimer
@@ -97,8 +97,6 @@ class InlineCorrectionEditor(QWidget):
         row3 = QHBoxLayout()
         row3.setSpacing(6)
 
-        self.chk_mem = QCheckBox("Memoritzar")
-
         self.btn_accept = QPushButton("✓ Acceptar")
         self.btn_accept.setStyleSheet(
             "background:#4CAF50; color:white; font-weight:bold; padding:4px 10px;"
@@ -113,11 +111,21 @@ class InlineCorrectionEditor(QWidget):
 
         self.lbl_status = QLabel()
 
-        row3.addWidget(self.chk_mem)
+        self.chk_mem = QCheckBox()
+        self.lbl_mem_prefix = QLabel()
+        self.lbl_mem_prefix.setStyleSheet("color:#555; font-style:italic;")
+        self.edit_mem_correccio = QLineEdit()
+        self.edit_mem_correccio.setFixedWidth(160)
+        self.edit_mem_correccio.setStyleSheet("font-style:italic;")
+        self.edit_mem_correccio.textChanged.connect(self._on_mem_correccio_changed)
+
         row3.addWidget(self.btn_accept)
         row3.addWidget(self.btn_reject)
         row3.addWidget(self.lbl_status)
         row3.addStretch()
+        row3.addWidget(self.chk_mem)
+        row3.addWidget(self.lbl_mem_prefix)
+        row3.addWidget(self.edit_mem_correccio)
         parent_layout.addLayout(row3)
 
     # ── Navegació ────────────────────────────────────────────────────────────
@@ -189,6 +197,12 @@ class InlineCorrectionEditor(QWidget):
         else:
             self._refresh()
 
+    def _on_mem_correccio_changed(self, text: str):
+        if 0 <= self._current < len(self._corrections):
+            c = self._corrections[self._current]
+            if c['status'] == 'manual':
+                c['correccio'] = text
+
     def _move_to_next_pending(self):
         n = len(self._corrections)
         for i in range(self._current + 1, n):
@@ -234,7 +248,24 @@ class InlineCorrectionEditor(QWidget):
             blocked = status in ('manual', 'not_found')
             self.btn_accept.setEnabled(status != 'accepted' and not blocked)
             self.btn_reject.setEnabled(status != 'rejected' and not blocked)
-            self.chk_mem.setEnabled(status == 'pending')
+            mem_enabled = status in ('pending', 'manual')
+            self.chk_mem.setEnabled(mem_enabled)
+            if mem_enabled:
+                self.lbl_mem_prefix.setText(f'Memoritzar "{c["original"]}" →')
+                self.edit_mem_correccio.setReadOnly(status == 'pending')
+                self.edit_mem_correccio.setStyleSheet(
+                    "font-style:italic; color:#555;" if status == 'pending'
+                    else "font-style:italic; color:#000; background:#FFF9C4;"
+                )
+                # Actualitzar el camp només si el valor ha canviat per evitar bucles
+                if self.edit_mem_correccio.text() != c['correccio']:
+                    self.edit_mem_correccio.setText(c['correccio'])
+                self.lbl_mem_prefix.setVisible(True)
+                self.edit_mem_correccio.setVisible(True)
+            else:
+                self.lbl_mem_prefix.setVisible(False)
+                self.edit_mem_correccio.setVisible(False)
+                self.chk_mem.setChecked(False)
 
             if status == 'accepted':
                 self.lbl_status.setText("✓ Canvi acceptat")
@@ -338,4 +369,10 @@ class InlineCorrectionEditor(QWidget):
         return self.editor.toPlainText()
 
     def get_memorize_list(self) -> list[dict]:
-        return list(self._memorized)
+        # Afegir la correcció actual si és manual i el checkbox està marcat
+        result = list(self._memorized)
+        if 0 <= self._current < len(self._corrections) and self.chk_mem.isChecked():
+            c = self._corrections[self._current]
+            if c['status'] == 'manual' and not any(m['original'] == c['original'] for m in result):
+                result.append({'original': c['original'], 'correccio': c['correccio']})
+        return result
