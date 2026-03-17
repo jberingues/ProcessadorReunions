@@ -62,7 +62,7 @@ class InlineCorrectionEditor(QWidget):
             # Posicionar-se a la primera pendent
             first_pending = next(
                 (i for i, c in enumerate(self._corrections) if c['status'] == 'pending'),
-                0
+                -1 if not self._corrections else 0
             )
             self._current = first_pending
             self.editor.textChanged.connect(lambda: self._timer.start())

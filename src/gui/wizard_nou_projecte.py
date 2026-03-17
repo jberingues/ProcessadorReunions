@@ -279,7 +279,8 @@ class WizardNouProjecte(QDialog):
         else:
             self.label_corrections.setText("Cap correcció detectada. Pots editar el text lliurement:")
 
-        self.inline_editor = InlineCorrectionEditor(transcript, corrections)
+        threshold = self.corrector.threshold_auto if self.corrector else 1.1
+        self.inline_editor = InlineCorrectionEditor(transcript, corrections, threshold_auto=threshold)
         self._corrections_page_layout.addWidget(self.inline_editor)
 
         self.btn_next.setEnabled(True)
