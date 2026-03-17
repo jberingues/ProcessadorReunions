@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 
@@ -281,6 +282,16 @@ from: "{thread['from']}"
         new_path = path.with_stem(new_stem)
         path.rename(new_path)
         return new_path
+
+    def update_project_fields(self, note_path: Path, data_inici: str, resum: str):
+        content = note_path.read_text(encoding='utf-8')
+        content = re.sub(r'^Data inici:.*$', f'Data inici: {data_inici}', content, flags=re.MULTILINE)
+        content = re.sub(
+            r'## Resum\n[\s\S]*?\n---',
+            f'## Resum\n\n{resum}\n\n---',
+            content
+        )
+        note_path.write_text(content, encoding='utf-8')
 
     def _gen_content(self, m, t, subtype=None):
         data = m['start'].strftime('%Y-%m-%d')
