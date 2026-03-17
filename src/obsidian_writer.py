@@ -25,7 +25,7 @@ class ObsidianWriter:
                 notes_to_create = ['Històric']
             else:
                 title = meeting['title']
-                estat_nom = title[len('Seguiment '):] if title.startswith('Seguiment ') else 'Estat actual'
+                estat_nom = title if title else 'Estat actual'
                 notes_to_create = [estat_nom, 'Històric']
             for nom_nota in notes_to_create:
                 nota_path = meeting_dir / f"{nom_nota}.md"

@@ -201,7 +201,7 @@ class WizardProcessar(QDialog):
 
         note = self.selected_note
         title = note['title']
-        estat_nom = title[len('Seguiment '):] if title.startswith('Seguiment ') else 'Estat actual'
+        estat_nom = title if title else 'Estat actual'
         estat_path = note['path'].parent.parent / f'{estat_nom}.md'
         if not estat_path.exists():
             estat_path.write_text("", encoding='utf-8')

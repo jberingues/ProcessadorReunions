@@ -71,15 +71,17 @@ class InlineCorrectionEditor(QWidget):
     # ── Auto-acceptació ──────────────────────────────────────────────────────
 
     def _auto_accept_high_confidence(self, threshold: float):
-        """Accepta automàticament les correccions amb confiança >= threshold."""
+        """Accepta automàticament les correccions amb confiança >= threshold i les elimina de la llista."""
+        remaining = []
         for c in self._corrections:
             if c.get('confiança', 0) >= threshold:
                 cursor = self.editor.document().find(c['original'])
                 if not cursor.isNull():
                     cursor.insertText(c['correccio'])
-                    c['status'] = 'accepted'
-                else:
-                    c['status'] = 'not_found'
+                # no s'afegeix a remaining: desapareix de la llista
+            else:
+                remaining.append(c)
+        self._corrections = remaining
 
     # ── Nav bar (3 files) ────────────────────────────────────────────────────
 

@@ -322,7 +322,7 @@ class ReunioInteractiva:
             return self._processar_seguiment_puntual(note, new_transcript)
 
         title = note['title']
-        estat_nom = title[len('Seguiment '):] if title.startswith('Seguiment ') else 'Estat actual'
+        estat_nom = title if title else 'Estat actual'
         estat_path = note['path'].parent.parent / f'{estat_nom}.md'
         if not estat_path.exists():
             estat_path.write_text("", encoding='utf-8')
