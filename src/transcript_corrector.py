@@ -6,10 +6,10 @@ from json_repair import repair_json
 
 
 class TranscriptCorrector:
-    def __init__(self, vocab: dict, memorized_path: Path = None, model: str = None,
+    def __init__(self, vocab: dict, semantic_memory_path: Path = None, model: str = None,
                  threshold_auto: float = 0.85):
         self.vocab = vocab
-        self.memorized_path = Path(memorized_path) if memorized_path else None
+        self.semantic_memory_path = Path(semantic_memory_path) if semantic_memory_path else None
         self.llm = LLM(model=model or os.getenv('LLM_MODELH'), drop_params=True)
         self.threshold_auto = threshold_auto
 
@@ -21,9 +21,17 @@ class TranscriptCorrector:
             Cada correcció: {"original", "correccio", "motiu", "frase"}
         """
         # 1. Aplicar correccions memoritzades automàticament
-        memorized = self._load_memorized()
-        if memorized:
-            for original, correccio in memorized.items():
+        # Globals (Canvis-Memoritzats.md) → s'apliquen a totes les transcripcions
+        global_memorized = self._load_global_memorized()
+        if global_memorized:
+            for original, correccio in global_memorized.items():
+                if original in transcript:
+                    transcript = transcript.replace(original, correccio)
+
+        # Locals (semantic_memory.json) → s'apliquen només a aquesta sèrie
+        local_memorized = self._load_local_memorized()
+        if local_memorized:
+            for original, correccio in local_memorized.items():
                 if original in transcript:
                     transcript = transcript.replace(original, correccio)
 
@@ -31,18 +39,12 @@ class TranscriptCorrector:
         vocab_text = self._format_vocab()
 
         semantic_section = ''
-        if semantic_context and (semantic_context.aliases or semantic_context.topic_context):
-            alias_lines = '\n'.join(
-                f'- "{w}" s\'ha de corregir a "{c}"'
-                for w, c in semantic_context.aliases.items()
-            )
+        if semantic_context and (semantic_context.relevant_projects or semantic_context.topic_context or semantic_context.likely_terms):
+            terms_line = f"\nTermes tècnics confirmats per a aquesta sèrie: {', '.join(semantic_context.likely_terms)}" if semantic_context.likely_terms else ''
             semantic_section = f"""
 MEMÒRIA SEMÀNTICA D'AQUESTA SÈRIE DE REUNIONS:
 Projectes habituals: {', '.join(semantic_context.relevant_projects) or 'cap'}
-Temes recurrents: {', '.join(semantic_context.topic_context) or 'cap'}
-
-CORRECCIONS APRESES (errors fonètics ja confirmats per a aquesta sèrie):
-{alias_lines}
+Temes recurrents: {', '.join(semantic_context.topic_context) or 'cap'}{terms_line}
 """
 
         ref_section = ''
@@ -96,6 +98,22 @@ Si no hi ha errors, retorna [].
             agent=agent
         )
 
+        if os.getenv('GENERA_LOG', '').upper() == 'TRUE':
+            from datetime import datetime
+            separator = '-' * 90
+            log_entry = (
+                f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+                f"{separator}\n"
+                f"Vocabulari:\n{vocab_text}\n\n"
+                f"Semàntic:\n{semantic_section}\n\n"
+                f"Referència:\n{ref_section}\n"
+                f"{separator}\n"
+            )
+            log_path = Path(__file__).resolve().parent.parent / 'data' / 'log-correccio-transcripcio.txt'
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(log_path, 'a', encoding='utf-8') as f:
+                f.write(log_entry)
+
         crew = Crew(agents=[agent], tasks=[task], verbose=False)
         result = crew.kickoff()
 
@@ -125,37 +143,38 @@ Si no hi ha errors, retorna [].
             )
         return transcript
 
-    def save_memorized(self, original: str, correccio: str):
-        """Desa una correcció al fitxer de correccions memoritzades."""
-        self._save_memorized(original, correccio)
-
-    def _load_memorized(self) -> dict:
-        if not self.memorized_path or not self.memorized_path.exists():
+    def _load_global_memorized(self) -> dict:
+        if not self.semantic_memory_path:
             return {}
-        corrections = {}
-        for line in self.memorized_path.read_text(encoding='utf-8').splitlines():
-            if line.startswith('- ') and ' → ' in line:
-                parts = line[2:].split(' → ', 1)
-                if len(parts) == 2:
-                    corrections[parts[0].strip()] = parts[1].strip()
-        return corrections
+        current = self.semantic_memory_path.parent
+        for _ in range(6):
+            candidate = current / 'zConfig' / 'Canvis-Memoritzats.md'
+            if candidate.exists():
+                break
+            current = current.parent
+        else:
+            return {}
+        result = {}
+        for line in candidate.read_text(encoding='utf-8').splitlines():
+            m = re.match(r'^-\s+(.+?)\s+→\s+(.+)$', line)
+            if m:
+                result[m.group(1)] = m.group(2)
+        return result
 
-    def _save_memorized(self, original: str, correccio: str):
-        if not self.memorized_path:
-            return
-        if not self.memorized_path.exists():
-            self.memorized_path.parent.mkdir(parents=True, exist_ok=True)
-            self.memorized_path.write_text(
-                "---\ntype: configuracio\n---\n\n# Canvis Memoritzats\n\n",
-                encoding='utf-8'
-            )
-        content = self.memorized_path.read_text(encoding='utf-8')
-        entry = f"- {original} → {correccio}\n"
-        if entry.strip() not in content:
-            self.memorized_path.write_text(content + entry, encoding='utf-8')
+    def _load_local_memorized(self) -> dict:
+        if not self.semantic_memory_path or not self.semantic_memory_path.exists():
+            return {}
+        try:
+            import json
+            data = json.loads(self.semantic_memory_path.read_text(encoding='utf-8'))
+            return data.get('aliases', {})
+        except Exception:
+            return {}
 
     def _format_vocab(self) -> str:
         lines = []
         for seccio, paraules in self.vocab.items():
+            if seccio == 'Configuració':
+                continue
             lines.append(f"{seccio}: {', '.join(paraules)}")
         return '\n'.join(lines)

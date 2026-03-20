@@ -19,6 +19,7 @@ class BatchNoteResult:
     corrections: list = field(default_factory=list)
     error_msg: str | None = None
     corrector: TranscriptCorrector | None = None
+    meeting_dir: object = None
 
 
 class WizardCorreccio(QDialog):
@@ -144,8 +145,7 @@ class WizardCorreccio(QDialog):
 
         self.stack.addWidget(w)
 
-    def _prepare_and_start_batch(self):
-        selected_rows = sorted(r.row() for r in self.table_notes.selectionModel().selectedRows())
+    def _prepare_and_start_batch(self, selected_rows: list[int]):
         selected_notes = [self.notes[r] for r in selected_rows]
 
         vocab_path = self.obsidian.vault / 'Reunions' / 'zConfig' / 'Vocabulari.md'
@@ -153,7 +153,6 @@ class WizardCorreccio(QDialog):
         vocab = loader.load()
         config = loader.load_config()
         threshold_auto = float(config.get('threshold_auto', '0.85'))
-        memorized_path = self.obsidian.vault / 'Reunions' / 'zConfig' / 'Canvis-Memoritzats.md'
 
         self.batch_results.clear()
         tasks = []
@@ -163,45 +162,54 @@ class WizardCorreccio(QDialog):
         self.progress_batch.setValue(0)
 
         for idx, note in enumerate(selected_notes):
-            corrector = TranscriptCorrector(vocab, memorized_path=memorized_path,
-                                           threshold_auto=threshold_auto)
-            transcript = self.obsidian.read_transcript(note['path'])
-
-            reference_transcript = None
-            processed_siblings = sorted(
-                [p for p in note['path'].parent.glob('*.md') if '*' in p.stem],
-                key=lambda p: p.stem[:6],
-                reverse=True
-            )
-            if processed_siblings:
-                reference_transcript = self.obsidian.read_transcript(processed_siblings[0])
-
-            semantic_context = None
-            meeting_dir = note['path'].parent.parent
-            if meeting_dir.name != 'Reunions':
-                from semantic_memory_builder import SemanticMemoryBuilder
-                from semantic_context_retriever import SemanticContextRetriever
-                SemanticMemoryBuilder().build_if_stale(meeting_dir)
-                semantic_context = SemanticContextRetriever().load(meeting_dir)
-
-            result = BatchNoteResult(
-                note=note, status='pending',
-                transcript=transcript, corrector=corrector
-            )
-            self.batch_results[idx] = result
-
-            tasks.append({
-                'index': idx,
-                'corrector': corrector,
-                'transcript': transcript,
-                'reference_transcript': reference_transcript,
-                'semantic_context': semantic_context,
-            })
-
             self.table_batch.setItem(idx, 0, QTableWidgetItem(note['date']))
             self.table_batch.setItem(idx, 1, QTableWidgetItem(note['title']))
             self.table_batch.setItem(idx, 2, QTableWidgetItem("Pendent"))
             self.table_batch.setItem(idx, 3, QTableWidgetItem("—"))
+            try:
+                meeting_dir = note['path'].parent.parent
+                semantic_memory_path = meeting_dir / 'semantic_memory.json'
+                corrector = TranscriptCorrector(vocab, semantic_memory_path=semantic_memory_path,
+                                               threshold_auto=threshold_auto)
+                transcript = self.obsidian.read_transcript(note['path'])
+
+                reference_transcript = None
+                processed_siblings = sorted(
+                    [p for p in note['path'].parent.glob('*.md') if '*' in p.stem],
+                    key=lambda p: p.stem[:6],
+                    reverse=True
+                )
+                if processed_siblings:
+                    reference_transcript = self.obsidian.read_transcript(processed_siblings[0])
+
+                semantic_context = None
+                if meeting_dir.name != 'Reunions':
+                    from semantic_memory_builder import SemanticMemoryBuilder
+                    from semantic_context_retriever import SemanticContextRetriever
+                    SemanticMemoryBuilder().build_if_stale(meeting_dir)
+                    semantic_context = SemanticContextRetriever().load(meeting_dir)
+
+                result = BatchNoteResult(
+                    note=note, status='pending',
+                    transcript=transcript, corrector=corrector,
+                    meeting_dir=meeting_dir
+                )
+                self.batch_results[idx] = result
+
+                tasks.append({
+                    'index': idx,
+                    'corrector': corrector,
+                    'transcript': transcript,
+                    'reference_transcript': reference_transcript,
+                    'semantic_context': semantic_context,
+                })
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                result = BatchNoteResult(note=note, status='error', error_msg=str(e))
+                self.batch_results[idx] = result
+                self.table_batch.setItem(idx, 2, QTableWidgetItem("Error"))
+                self.table_batch.setItem(idx, 3, QTableWidgetItem(str(e)[:40]))
 
         self.lbl_batch_status.setText(f"Processant 0/{len(selected_notes)}...")
 
@@ -218,13 +226,25 @@ class WizardCorreccio(QDialog):
 
     def _on_note_finished(self, idx, transcript, corrections):
         result = self.batch_results[idx]
-        result.status = 'detected'
         result.transcript = transcript
         result.corrections = corrections
 
-        n_corr = len(corrections)
-        self.table_batch.setItem(idx, 2, QTableWidgetItem("Detectat"))
-        self.table_batch.setItem(idx, 3, QTableWidgetItem(str(n_corr)))
+        if not corrections:
+            try:
+                self.obsidian.update_transcript(result.note['path'], transcript)
+                self.obsidian.mark_as_corrected(result.note['path'])
+                result.status = 'reviewed'
+                self.table_batch.setItem(idx, 2, QTableWidgetItem("Revisat ✓ (0 errors)"))
+                self.table_batch.setItem(idx, 3, QTableWidgetItem("0"))
+            except Exception as e:
+                result.status = 'error'
+                result.error_msg = str(e)
+                self.table_batch.setItem(idx, 2, QTableWidgetItem("Error"))
+                self.table_batch.setItem(idx, 3, QTableWidgetItem(str(e)[:40]))
+        else:
+            result.status = 'detected'
+            self.table_batch.setItem(idx, 2, QTableWidgetItem("Detectat"))
+            self.table_batch.setItem(idx, 3, QTableWidgetItem(str(len(corrections))))
 
         done = sum(1 for r in self.batch_results.values() if r.status in ('detected', 'reviewed', 'error'))
         self.progress_batch.setValue(done)
@@ -324,8 +344,9 @@ class WizardCorreccio(QDialog):
         result = self.batch_results[self.reviewing_idx]
 
         corrected = self.inline_editor.get_final_text()
-        for c in self.inline_editor.get_memorize_list():
-            result.corrector.save_memorized(c['original'], c['correccio'])
+        mem_list = self.inline_editor.get_memorize_list()
+        if mem_list and result.meeting_dir:
+            self._save_aliases_to_semantic_memory(result.meeting_dir, mem_list)
 
         self.obsidian.update_transcript(result.note['path'], corrected)
         self.obsidian.mark_as_corrected(result.note['path'])
@@ -335,6 +356,23 @@ class WizardCorreccio(QDialog):
 
         self.stack.setCurrentIndex(1)
         self._update_nav()
+
+    def _save_aliases_to_semantic_memory(self, meeting_dir, mem_list):
+        import json
+        json_path = meeting_dir / 'semantic_memory.json'
+        if not json_path.exists():
+            return
+        data = json.loads(json_path.read_text(encoding='utf-8'))
+        aliases = data.get('aliases', {})
+        technical_terms = data.get('technical_terms', [])
+        for c in mem_list:
+            aliases[c['original']] = c['correccio']
+            correccio_lower = c['correccio'].lower()
+            if not any(t.lower() == correccio_lower for t in technical_terms):
+                technical_terms.append(c['correccio'])
+        data['aliases'] = aliases
+        data['technical_terms'] = technical_terms
+        json_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
 
     # ── Pàgina 3: Resultat ───────────────────────────────────────────────────
 
@@ -407,9 +445,10 @@ class WizardCorreccio(QDialog):
             rows = self.table_notes.selectionModel().selectedRows()
             if not rows:
                 return
+            selected_rows = sorted(r.row() for r in rows)
             self.stack.setCurrentIndex(1)
             self._update_nav()
-            self._prepare_and_start_batch()
+            self._prepare_and_start_batch(selected_rows)
             return
 
         elif idx == 1:

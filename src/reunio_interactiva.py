@@ -247,7 +247,8 @@ class ReunioInteractiva:
         vocab_path = self.obsidian.vault / 'Reunions' / 'zConfig' / 'Vocabulari.md'
         vocab = VocabularyLoader(vocab_path).load()
 
-        memorized_path = self.obsidian.vault / 'Reunions' / 'zConfig' / 'Canvis-Memoritzats.md'
+        meeting_dir = note['path'].parent.parent
+        semantic_memory_path = meeting_dir / 'semantic_memory.json'
         reference_transcript = None
         processed_siblings = sorted(
             [p for p in note['path'].parent.glob('*.md') if '*' in p.stem],
@@ -259,7 +260,7 @@ class ReunioInteractiva:
 
         print(f"{Fore.CYAN}Analitzant transcripció...\n")
         transcript = self.obsidian.read_transcript(note['path'])
-        corrector = TranscriptCorrector(vocab, memorized_path=memorized_path)
+        corrector = TranscriptCorrector(vocab, semantic_memory_path=semantic_memory_path)
         new_transcript = corrector.correct(transcript, reference_transcript=reference_transcript)
 
         self.obsidian.update_transcript(note['path'], new_transcript)

@@ -73,6 +73,7 @@ class BatchCorrectionDetectWorker(QThread):
         self._abort = True
 
     def run(self):
+        import traceback
         for task in self.tasks:
             if self._abort:
                 break
@@ -85,6 +86,7 @@ class BatchCorrectionDetectWorker(QThread):
                 )
                 self.note_finished.emit(task['index'], transcript, corrections)
             except Exception as e:
+                traceback.print_exc()
                 self.note_error.emit(task['index'], str(e))
         self.all_finished.emit()
 

@@ -23,8 +23,13 @@ CrewLLM._prepare_completion_params = _patched_prepare
 _project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 load_dotenv(os.path.join(_project_root, '.env'))
 
+from pathlib import Path
 from PySide6.QtWidgets import QApplication
 from main_window import MainWindow
+
+_log_path = Path(_project_root) / 'data' / 'log-correccio-transcripcio.txt'
+if _log_path.exists():
+    _log_path.unlink()
 
 
 def main():
