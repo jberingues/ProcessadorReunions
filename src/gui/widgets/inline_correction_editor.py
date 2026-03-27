@@ -36,7 +36,7 @@ class InlineCorrectionEditor(QWidget):
     def __init__(self, transcript: str, corrections: list[dict], parent=None,
                  threshold_auto: float = 1.1):
         super().__init__(parent)
-        self._corrections = [dict(c, status='pending') for c in corrections]
+        self._corrections = [dict(c, status='pending', memorize=False) for c in corrections]
         self._memorized: list[dict] = []
         self._current = 0 if corrections else -1
 
@@ -135,6 +135,7 @@ class InlineCorrectionEditor(QWidget):
         self.lbl_status = QLabel()
 
         self.chk_mem = QCheckBox()
+        self.chk_mem.stateChanged.connect(self._on_mem_checked)
         self.lbl_mem_prefix = QLabel()
         self.lbl_mem_prefix.setStyleSheet("color:#555; font-style:italic;")
         self.edit_mem_correccio = QLineEdit()
@@ -188,11 +189,11 @@ class InlineCorrectionEditor(QWidget):
 
         c['status'] = 'accepted'
 
-        if self.chk_mem.isChecked():
+        if c.get('memorize', False):
             if not any(m['original'] == c['original'] for m in self._memorized):
                 self._memorized.append({'original': c['original'], 'correccio': c['correccio']})
 
-        self.chk_mem.setChecked(False)
+        c['memorize'] = False
 
         if was_pending:
             self._move_to_next_pending()
@@ -213,12 +214,16 @@ class InlineCorrectionEditor(QWidget):
                 cursor.insertText(c['original'])
 
         c['status'] = 'rejected'
-        self.chk_mem.setChecked(False)
+        c['memorize'] = False
 
         if was_pending:
             self._move_to_next_pending()
         else:
             self._refresh()
+
+    def _on_mem_checked(self, state: int):
+        if 0 <= self._current < len(self._corrections):
+            self._corrections[self._current]['memorize'] = bool(state)
 
     def _on_mem_correccio_changed(self, text: str):
         if 0 <= self._current < len(self._corrections):
@@ -285,10 +290,16 @@ class InlineCorrectionEditor(QWidget):
                     self.edit_mem_correccio.setText(c['correccio'])
                 self.lbl_mem_prefix.setVisible(True)
                 self.edit_mem_correccio.setVisible(True)
+                # Restaurar l'estat del checkbox per aquesta correcció
+                self.chk_mem.blockSignals(True)
+                self.chk_mem.setChecked(c.get('memorize', False))
+                self.chk_mem.blockSignals(False)
             else:
                 self.lbl_mem_prefix.setVisible(False)
                 self.edit_mem_correccio.setVisible(False)
+                self.chk_mem.blockSignals(True)
                 self.chk_mem.setChecked(False)
+                self.chk_mem.blockSignals(False)
 
             if status == 'accepted':
                 self.lbl_status.setText("✓ Canvi acceptat")
@@ -392,10 +403,10 @@ class InlineCorrectionEditor(QWidget):
         return self.editor.toPlainText()
 
     def get_memorize_list(self) -> list[dict]:
-        # Afegir la correcció actual si és manual i el checkbox està marcat
+        # Afegir correccions manuals pendents de desar que tenen memorize=True
         result = list(self._memorized)
-        if 0 <= self._current < len(self._corrections) and self.chk_mem.isChecked():
-            c = self._corrections[self._current]
-            if c['status'] == 'manual' and not any(m['original'] == c['original'] for m in result):
-                result.append({'original': c['original'], 'correccio': c['correccio']})
+        for c in self._corrections:
+            if c['status'] == 'manual' and c.get('memorize', False):
+                if not any(m['original'] == c['original'] for m in result):
+                    result.append({'original': c['original'], 'correccio': c['correccio']})
         return result

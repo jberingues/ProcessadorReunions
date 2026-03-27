@@ -56,7 +56,6 @@ class WizardCorreccio(QDialog):
         self._build_page0_selection()
         self._build_page1_progress()
         self._build_page2_review()
-        self._build_page3_result()
 
         self._update_nav()
         self._load_notes()
@@ -374,40 +373,6 @@ class WizardCorreccio(QDialog):
         data['technical_terms'] = technical_terms
         json_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
 
-    # ── Pàgina 3: Resultat ───────────────────────────────────────────────────
-
-    def _build_page3_result(self):
-        page = QVBoxLayout()
-        w = QWidget()
-        w.setLayout(page)
-
-        self.result_label = QLabel()
-        self.result_label.setWordWrap(True)
-        self.result_label.setStyleSheet("font-size: 14px;")
-        self.result_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        page.addWidget(self.result_label)
-
-        self.btn_back_to_review = QPushButton("Tornar a revisar")
-        self.btn_back_to_review.clicked.connect(lambda: self._go_to_page(1))
-        page.addWidget(self.btn_back_to_review, alignment=Qt.AlignmentFlag.AlignCenter)
-
-        page.addStretch()
-        self.stack.addWidget(w)
-
-    def _show_result_summary(self):
-        reviewed = sum(1 for r in self.batch_results.values() if r.status == 'reviewed')
-        detected = sum(1 for r in self.batch_results.values() if r.status == 'detected')
-        errors = sum(1 for r in self.batch_results.values() if r.status == 'error')
-
-        lines = [f"Corregides: {reviewed}"]
-        if detected:
-            lines.append(f"Pendents de revisió: {detected}")
-        if errors:
-            lines.append(f"Errors: {errors}")
-
-        self.result_label.setText("\n".join(lines))
-        self.btn_back_to_review.setVisible(detected > 0)
-
     # ── Navegació ────────────────────────────────────────────────────────────
 
     def _current_page(self):
@@ -434,8 +399,6 @@ class WizardCorreccio(QDialog):
             self.stack.setCurrentIndex(0)
         elif idx == 2:
             self.stack.setCurrentIndex(1)
-        elif idx == 3:
-            self.stack.setCurrentIndex(1)
         self._update_nav()
 
     def _go_next(self):
@@ -452,34 +415,24 @@ class WizardCorreccio(QDialog):
             return
 
         elif idx == 1:
-            self._show_result_summary()
-            self.stack.setCurrentIndex(3)
-            self._update_nav()
-            return
-
-        elif idx == 3:
             self.accept()
             return
 
     def _update_nav(self):
         idx = self._current_page()
-        self.btn_back.setEnabled(idx in (1, 2, 3))
+        self.btn_back.setEnabled(idx in (1, 2))
 
         if idx == 0:
             self.btn_next.setText("Endavant")
             self.btn_next.setEnabled(True)
         elif idx == 1:
-            self.btn_next.setText("Endavant")
-            # Només habilitat si el batch ha acabat
             batch_done = self.batch_worker is None or not self.batch_worker.isRunning()
+            self.btn_next.setText("Tancar" if batch_done else "Endavant")
             self.btn_next.setEnabled(batch_done)
             self._update_review_button()
         elif idx == 2:
             self.btn_next.setEnabled(False)
             self.btn_next.setText("Endavant")
-        elif idx == 3:
-            self.btn_next.setText("Tancar")
-            self.btn_next.setEnabled(True)
 
     # ── Tancament ────────────────────────────────────────────────────────────
 

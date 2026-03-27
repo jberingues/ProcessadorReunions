@@ -44,7 +44,6 @@ class WizardTranscripcio(QDialog):
         self._build_page0_meetings()
         self._build_page1_tree()
         self._build_page2_transcript()
-        self._build_page3_confirm()
 
         self._update_nav()
         self._load_meetings()
@@ -62,7 +61,7 @@ class WizardTranscripcio(QDialog):
         date_row.addWidget(QLabel("Data inicial:"))
         self.date_from = QDateEdit()
         self.date_from.setCalendarPopup(True)
-        self.date_from.setDate(QDate.currentDate().addDays(-1))
+        self.date_from.setDate(QDate.currentDate())
         self.date_from.setDisplayFormat("dd/MM/yyyy")
         date_row.addWidget(self.date_from)
         date_row.addSpacing(16)
@@ -174,33 +173,6 @@ class WizardTranscripcio(QDialog):
 
         self.stack.addWidget(container)
 
-    # -- Pàgina 3: Confirmació --
-
-    def _build_page3_confirm(self):
-        page = QVBoxLayout()
-        container = self._make_page(page)
-
-        self.confirm_label = QLabel()
-        self.confirm_label.setWordWrap(True)
-        self.confirm_label.setStyleSheet("font-size: 13px;")
-        page.addWidget(self.confirm_label)
-        page.addStretch()
-
-        self.stack.addWidget(container)
-
-    def _update_confirm(self):
-        lines = len(self.transcript_editor.get_text().splitlines()) if self.transcript_editor.get_text() else 0
-        try:
-            dir_text = str(self.selected_target_dir.relative_to(self.obsidian.vault))
-        except ValueError:
-            dir_text = str(self.selected_target_dir)
-        self.confirm_label.setText(
-            f"Reunió: {self.selected_reunio['title']}\n"
-            f"Data: {self.selected_reunio['start'].strftime('%d/%m/%Y %H:%M')}\n"
-            f"Directori: {dir_text}\n"
-            f"Línies: {lines}"
-        )
-
     # -- Navegació --
 
     def _make_page(self, layout):
@@ -234,9 +206,6 @@ class WizardTranscripcio(QDialog):
         elif idx == 2:
             if not self.transcript_editor.get_text():
                 return
-            self._update_confirm()
-
-        elif idx == 3:
             self._save()
             return
 
@@ -246,7 +215,7 @@ class WizardTranscripcio(QDialog):
     def _update_nav(self):
         idx = self._current_page()
         self.btn_back.setEnabled(idx > 0)
-        self.btn_next.setText("Desar" if idx == 3 else "Endavant")
+        self.btn_next.setText("Desar" if idx == 2 else "Endavant")
 
         if idx == 1:
             self.btn_next.setEnabled(self.selected_target_dir is not None)
@@ -262,15 +231,7 @@ class WizardTranscripcio(QDialog):
             self.selected_target_dir
         )
         if success:
-            ret = QMessageBox.question(
-                self, "Nota desada",
-                "Nota guardada correctament!\n\nVols entrar una altra transcripció?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-            )
-            if ret == QMessageBox.StandardButton.Yes:
-                self._reset()
-            else:
-                self.accept()
+            self._reset()
         else:
             QMessageBox.critical(self, "Error", "Error guardant la nota.")
 

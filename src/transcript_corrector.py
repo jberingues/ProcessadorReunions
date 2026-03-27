@@ -1,5 +1,6 @@
 import os
 import re
+import time
 from pathlib import Path
 from crewai import Agent, Task, Crew, LLM
 from json_repair import repair_json
@@ -115,7 +116,7 @@ Si no hi ha errors, retorna [].
                 f.write(log_entry)
 
         crew = Crew(agents=[agent], tasks=[task], verbose=False)
-        result = crew.kickoff()
+        result = self._kickoff_with_retry(crew)
 
         raw = result.raw if hasattr(result, 'raw') else str(result)
         corrections = repair_json(raw, return_objects=True) or []
@@ -132,6 +133,21 @@ Si no hi ha errors, retorna [].
         ]
 
         return transcript, corrections
+
+    def _kickoff_with_retry(self, crew: Crew, max_retries: int = 4):
+        """Executa crew.kickoff() amb reintents exponencials en cas de 429."""
+        delay = 30
+        for attempt in range(max_retries):
+            try:
+                return crew.kickoff()
+            except Exception as e:
+                is_rate_limit = '429' in str(e) or 'Too Many Requests' in str(e) or 'rate_limit' in str(e).lower()
+                if is_rate_limit and attempt < max_retries - 1:
+                    print(f"[TranscriptCorrector] 429 rate limit, reintent {attempt + 1}/{max_retries - 1} en {delay}s...")
+                    time.sleep(delay)
+                    delay = min(delay * 2, 120)
+                else:
+                    raise
 
     def apply(self, transcript: str, corrections: list[dict]) -> str:
         """Aplica les correccions aprovades a la transcripció."""
