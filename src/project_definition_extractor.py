@@ -59,6 +59,8 @@ RULES:
 short excerpt when possible.
 - For effort estimates: the organization measures effort in "points" \
 (1 point = 1 person-day of work) and cost in EUR. Extract both if mentioned.
+- For "date_defined": use the date of the earliest meeting source, NOT dates \
+from document filenames or PDF metadata.
 - Return ONLY valid JSON, no markdown fences, no extra text.
 """
 
