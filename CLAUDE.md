@@ -40,14 +40,15 @@ Reunions/
         YYMMDD_Títol.md
       Estat actual.md
       Històric.md
+      semantic_memory.json   # memòria semàntica per sèrie de reunions
   Projectes/
     <NomProjecte>/
       <NomProjecte>.md   # project template note
       Reunions/
       Documentació/
   zConfig/
-    Vocabulari.md          # vocabulary for corrections
-    Canvis-Memoritzats.md  # memorized corrections
+    Vocabulari.md          # vocabulary for corrections + secció "## Configuració"
+    Canvis-Memoritzats.md  # memorized corrections (global)
 ```
 
 ## GUI Wizard Flows (`src/gui/`)
@@ -74,37 +75,70 @@ Accés a Gmail via la mateixa OAuth. `fetch_threads(date_from, date_to)` retorna
 **`obsidian_writer.py` — `ObsidianWriter`**
 Totes les operacions de lectura/escriptura al vault. Mètodes principals:
 - `create_meeting_note` / `create_email_note` / `create_simple_note` — crea notes
-- `find_corrected_notes` / `find_unprocessed_notes` / `find_uncorrected_notes` — cerca notes per estat
+- `find_corrected_notes` / `find_unprocessed_notes` / `find_uncorrected_notes` / `find_unprocessed_email_notes` — cerca notes per estat
 - `read_transcript` / `update_transcript` — llegeix/actualitza la secció `## Transcripció`
+- `read_email_body` — extreu cos d'una nota de correu
 - `mark_as_corrected` / `mark_as_processed` — canvia el sufix del fitxer (`~` / `*`)
 - `append_to_provider_note` / `append_to_historic` — afegeix contingut a notes existents
 - `find_subfolders(type_folder)` — llista subcarpetes de `Reunions/<type_folder>/`
 - `update_project_fields(note_path, data_inici, resum)` — omple `Data inici` i `## Resum` a una nota de projecte
 
 **`transcript_corrector.py` — `TranscriptCorrector`**
-Utilitza CrewAI + vocabulari de `zConfig/Vocabulari.md` i correccions memoritzades de `zConfig/Canvis-Memoritzats.md`. `detect(transcript)` retorna `(transcript_amb_memoritzades, llista_correccions_noves)`.
+Constructor: `(vocab, semantic_memory_path=None, model=None, threshold_auto=0.85)`.
+- Carrega correccions memoritzades globals (`zConfig/Canvis-Memoritzats.md`) i locals (`semantic_memory.json` → `aliases`).
+- `detect(transcript, reference_transcript=None, semantic_context=None)` retorna `(transcript_amb_memoritzades, llista_correccions_noves)`. Cada correcció: `{original, correccio, motiu, frase, confiança}`.
+
+**`semantic_memory_builder.py` — `SemanticMemoryBuilder`**
+Construeix i manté `semantic_memory.json` per sèrie de reunions.
+- `build_if_stale(meeting_dir)` — reconstrueix si els `.md` processats son més recents que el JSON.
+- Extreu temes de les notes, carrega projectes de `Vocabulari.md`, fusiona amb dades existents.
+
+**`semantic_context_retriever.py` — `SemanticContextRetriever`**
+- `load(meeting_dir)` — carrega `semantic_memory.json` i retorna un `SemanticContext` (o None si no existeix).
+
+**`semantic_models.py`**
+Models Pydantic: `SemanticMemory` (person, projects, technical_terms, aliases, recurring_topics) i `SemanticContext` (relevant_projects, likely_terms, topic_context, aliases).
+
+**`semantic_memory.json`** — ubicació: `{meeting_dir}/semantic_memory.json`
+```json
+{
+  "person": "Nom Persona",
+  "projects": ["proj1"],
+  "technical_terms": ["terme1"],
+  "aliases": { "paraula_errònia": "terme_correcte" },
+  "recurring_topics": ["tema1"]
+}
+```
+S'actualitza **només** quan l'usuari activa el flag "Memoritzar" en una correcció: s'afegeix l'alias `original → correccio` i la paraula correcta a `technical_terms`.
 
 **`meeting_analyzer.py` — `MeetingAnalyzer` + `StateFileUpdater`**
-`MeetingAnalyzer.analyze(topics, transcript)` retorna `MeetingAnalysisResult` (temes tractats + nous temes) via CrewAI. `StateFileUpdater.update(estat_path, result, date_label)` actualitza `Estat actual.md` i `Històric.md`.
+`MeetingAnalyzer.analyze(topics, transcript, brief=False)` retorna `MeetingAnalysisResult` (temes tractats + nous temes) via CrewAI. `StateFileUpdater.update(estat_path, result, date_label)` actualitza `Estat actual.md` i `Històric.md`.
 
 **`daily_processor.py` — `DailyProcessor`**
-Processa transcripcions de Daily Scrum via CrewAI. Retorna `DailyScrumResult` (participants amb ahir/avui + altres temes).
+Constructor: `(vocab, model=None)`. Processa transcripcions de Daily Scrum via CrewAI. `process(transcript, attendees)` retorna `DailyScrumResult` (participants amb ahir/avui + altres temes). `format_markdown(result, meeting_title, date_str)` genera el markdown.
 
 **`vocabulary_loader.py` — `VocabularyLoader`**
-Llegeix `Vocabulari.md` i retorna el vocabulari com a dict.
-
-**`semantic_*.py`**
-Models i utilitats per a cerca semàntica (embeddings) sobre el vault.
+Llegeix `Vocabulari.md` i retorna el vocabulari com a dict per seccions. `load_config()` retorna claus de la secció `## Configuració` (e.g. `threshold_auto`).
 
 **`gui/workers.py` — QThread Workers**
 - `CalendarWorker` — carrega reunions de Google Calendar
 - `GmailWorker` — carrega fils de Gmail
-- `CorrectionDetectWorker` / `BatchCorrectionDetectWorker` — correcció de transcripcions
+- `CorrectionDetectWorker` — correcció d'una transcripció (single)
+- `BatchCorrectionDetectWorker` — correcció batch; signals: `note_started(int)`, `note_finished(int, str, list)`, `note_error(int, str)`, `all_finished()`
 - `DailyProcessorWorker` — processa daily scrum
-- `MeetingAnalyzerWorker` — analitza reunions de seguiment
+- `MeetingAnalyzerWorker` — analitza reunions de seguiment (suporta `brief=True`)
 - `SummaryWorker` — genera resums via litellm
 - `ProjectInitWorker` — genera resum de projecte via litellm (transcripció + fitxers)
 
 **`gui/widgets/`**
-- `inline_correction_editor.py` — editor inline amb highlights de correccions i opció de memoritzar
-- `transcript_editor.py` — editor de transcripció amb paste i net
+- `inline_correction_editor.py` — editor inline amb highlights de correccions i navegació. Estats: `pending` (groc), `accepted` (verd), `rejected` (gris), `manual` (usuari ha editat), `not_found`. API pública: `get_final_text()`, `get_memorize_list()`, `get_accepted_words()`. El checkbox "Memoritzar" permet marcar correccions per desar a `semantic_memory.json`.
+- `correction_checklist.py` — llista de correccions amb checkboxes d'aprovació i opció de memoritzar.
+- `transcript_editor.py` — editor de transcripció amb paste i net.
+
+## Wizard Correccio — Flux Detallat
+
+**3 pàgines** (`QStackedWidget`):
+
+1. **Selecció** — taula de notes sense corregir, selecció múltiple.
+2. **Batch processing** — per cada nota: crea `TranscriptCorrector` (amb `semantic_memory_path` i `threshold_auto`), carrega transcript i transcript de referència (nota processada més recent), construeix `SemanticContext` via `SemanticMemoryBuilder` + `SemanticContextRetriever`, llança `BatchCorrectionDetectWorker`. Notes sense correccions es marquen directament com a corregides (`~`).
+3. **Revisió individual** — `InlineCorrectionEditor` per cada nota amb correccions detectades. En clicar "Desar": actualitza `semantic_memory.json` si hi ha memoritzacions, desa transcript corregit, marca com a corregida.

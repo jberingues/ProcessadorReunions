@@ -150,40 +150,20 @@ class GmailWorker(QThread):
 
 
 class ProjectInitWorker(QThread):
-    finished = Signal(str)
+    finished = Signal(object)  # ProjectDefinition
     error = Signal(str)
 
-    def __init__(self, transcript: str, file_contents: list, project_name: str, parent=None):
+    def __init__(self, project_name: str, sources: list, parent=None):
         super().__init__(parent)
-        self.transcript = transcript
-        self.file_contents = file_contents
         self.project_name = project_name
+        self.sources = sources
 
     def run(self):
         try:
-            docs_text = ''
-            if self.file_contents:
-                parts = [f"--- Document {i} ---\n{c}" for i, c in enumerate(self.file_contents, 1)]
-                docs_text = '\n\n'.join(parts)
-
-            context = f"Transcripció de la reunió de definició:\n{self.transcript}"
-            if docs_text:
-                context += f"\n\nDocumentació del projecte:\n{docs_text}"
-
-            response = litellm.completion(
-                model=os.getenv('LLM_MODELH'),
-                messages=[{
-                    "role": "user",
-                    "content": (
-                        f"Analitza la informació següent sobre el projecte «{self.project_name}» "
-                        f"i genera un resum en català de 4-5 línies.\n"
-                        f"Descriu què és el projecte, els objectius principals i el context clau. "
-                        f"Resposta directa, sense introduccions ni conclusions.\n\n"
-                        f"{context}"
-                    )
-                }]
-            )
-            self.finished.emit(response.choices[0].message.content.strip())
+            from project_definition_extractor import ProjectDefinitionExtractor
+            extractor = ProjectDefinitionExtractor()
+            result = extractor.extract(self.project_name, self.sources)
+            self.finished.emit(result)
         except Exception as e:
             self.error.emit(str(e))
 

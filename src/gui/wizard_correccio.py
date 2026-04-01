@@ -344,8 +344,8 @@ class WizardCorreccio(QDialog):
 
         corrected = self.inline_editor.get_final_text()
         mem_list = self.inline_editor.get_memorize_list()
-        if mem_list and result.meeting_dir:
-            self._save_aliases_to_semantic_memory(result.meeting_dir, mem_list)
+        if result.meeting_dir and mem_list:
+            self._save_to_semantic_memory(result.meeting_dir, mem_list)
 
         self.obsidian.update_transcript(result.note['path'], corrected)
         self.obsidian.mark_as_corrected(result.note['path'])
@@ -356,7 +356,7 @@ class WizardCorreccio(QDialog):
         self.stack.setCurrentIndex(1)
         self._update_nav()
 
-    def _save_aliases_to_semantic_memory(self, meeting_dir, mem_list):
+    def _save_to_semantic_memory(self, meeting_dir, mem_list):
         import json
         json_path = meeting_dir / 'semantic_memory.json'
         if not json_path.exists():
@@ -364,11 +364,13 @@ class WizardCorreccio(QDialog):
         data = json.loads(json_path.read_text(encoding='utf-8'))
         aliases = data.get('aliases', {})
         technical_terms = data.get('technical_terms', [])
+
+        # Memoritzar: crear alias "original → correccio" i afegir correccio a technical_terms
         for c in mem_list:
             aliases[c['original']] = c['correccio']
-            correccio_lower = c['correccio'].lower()
-            if not any(t.lower() == correccio_lower for t in technical_terms):
+            if not any(t.lower() == c['correccio'].lower() for t in technical_terms):
                 technical_terms.append(c['correccio'])
+
         data['aliases'] = aliases
         data['technical_terms'] = technical_terms
         json_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')

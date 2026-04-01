@@ -410,3 +410,11 @@ class InlineCorrectionEditor(QWidget):
                 if not any(m['original'] == c['original'] for m in result):
                     result.append({'original': c['original'], 'correccio': c['correccio']})
         return result
+
+    def get_accepted_words(self) -> list[str]:
+        """Retorna les paraules corregides de correccions acceptades (no memoritzades)."""
+        words = []
+        for c in self._corrections:
+            if c['status'] == 'accepted':
+                words.append(c['correccio'])
+        return words
