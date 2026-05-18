@@ -2,6 +2,7 @@ from PySide6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QPushButton, QL
 from PySide6.QtCore import Qt
 from calendar_matcher import CalendarMatcher
 from obsidian_writer import ObsidianWriter
+from plaud_client import PlaudClient
 from wizard_transcripcio import WizardTranscripcio
 from wizard_correccio import WizardCorreccio
 from wizard_processar import WizardProcessar
@@ -21,6 +22,7 @@ class MainWindow(QMainWindow):
         self.calendar = CalendarMatcher()
         self.obsidian = ObsidianWriter(vault_path)
         self.gmail_fetcher = GmailFetcher(self.calendar.gmail)
+        self.plaud_client = PlaudClient()
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -85,7 +87,7 @@ class MainWindow(QMainWindow):
 
     def _open_transcripcions(self):
         self._disable_all()
-        wizard = WizardTranscripcio(self.calendar, self.obsidian, self)
+        wizard = WizardTranscripcio(self.calendar, self.obsidian, self.plaud_client, self)
         wizard.finished.connect(self._wizard_closed)
         wizard.open()
 

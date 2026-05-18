@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import os
 import sys
+import logging
 
 # Afegeix src/ al sys.path per mantenir els imports existents
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -30,6 +31,19 @@ from main_window import MainWindow
 _log_path = Path(_project_root) / 'data' / 'log-correccio-transcripcio.txt'
 if _log_path.exists():
     _log_path.unlink()
+
+_app_log_path = Path(_project_root) / 'data' / 'app.log'
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
+    handlers=[
+        logging.FileHandler(_app_log_path, mode='w', encoding='utf-8'),
+        logging.StreamHandler(sys.stderr),
+    ]
+)
+# Silenciar mòduls massa verbosos
+for _noisy in ('httpx', 'httpcore', 'openai', 'litellm', 'crewai'):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
 
 
 def main():

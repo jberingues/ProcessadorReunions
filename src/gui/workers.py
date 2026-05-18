@@ -1,7 +1,16 @@
 import os
+import logging
 import litellm
 from datetime import datetime, timedelta
 from PySide6.QtCore import QThread, Signal
+
+from plaud_client import (
+    PlaudCLINotInstalled,
+    PlaudError,
+    PlaudNotAuthenticated,
+)
+
+logger = logging.getLogger(__name__)
 
 
 class CalendarWorker(QThread):
@@ -31,6 +40,7 @@ class CalendarWorker(QThread):
             reunions = [self.calendar._parse_event(e) for e in events if 'attendees' in e]
             self.finished.emit(reunions)
         except Exception as e:
+            logger.exception("CalendarWorker error")
             self.error.emit(str(e))
 
 
@@ -55,6 +65,7 @@ class CorrectionDetectWorker(QThread):
             )
             self.finished.emit(transcript, corrections)
         except Exception as e:
+            logger.exception("CorrectionDetectWorker error")
             self.error.emit(str(e))
 
 
@@ -73,7 +84,6 @@ class BatchCorrectionDetectWorker(QThread):
         self._abort = True
 
     def run(self):
-        import traceback
         for task in self.tasks:
             if self._abort:
                 break
@@ -86,7 +96,7 @@ class BatchCorrectionDetectWorker(QThread):
                 )
                 self.note_finished.emit(task['index'], transcript, corrections)
             except Exception as e:
-                traceback.print_exc()
+                logger.exception("BatchCorrectionDetectWorker error a nota index=%d", task['index'])
                 self.note_error.emit(task['index'], str(e))
         self.all_finished.emit()
 
@@ -109,6 +119,7 @@ class DailyProcessorWorker(QThread):
             md_output = self.processor.format_markdown(result, self.meeting_title, self.date_str)
             self.finished.emit(result, md_output)
         except Exception as e:
+            logger.exception("DailyProcessorWorker error")
             self.error.emit(str(e))
 
 
@@ -128,6 +139,7 @@ class MeetingAnalyzerWorker(QThread):
             result = self.analyzer.analyze(self.topics, self.transcript, brief=self.brief)
             self.finished.emit(result)
         except Exception as e:
+            logger.exception("MeetingAnalyzerWorker error")
             self.error.emit(str(e))
 
 
@@ -146,6 +158,7 @@ class GmailWorker(QThread):
             threads = self.fetcher.fetch_threads(self.date_from, self.date_to)
             self.finished.emit(threads)
         except Exception as e:
+            logger.exception("GmailWorker error")
             self.error.emit(str(e))
 
 
@@ -165,6 +178,7 @@ class ProjectInitWorker(QThread):
             result = extractor.extract(self.project_name, self.sources)
             self.finished.emit(result)
         except Exception as e:
+            logger.exception("ProjectInitWorker error")
             self.error.emit(str(e))
 
 
@@ -196,4 +210,67 @@ class SummaryWorker(QThread):
             summary = response.choices[0].message.content.strip()
             self.finished.emit(summary)
         except Exception as e:
+            logger.exception("SummaryWorker error")
             self.error.emit(str(e))
+
+
+class PlaudListWorker(QThread):
+    """Llista gravacions Plaud d'un dia i resol `start_at` UTC per cadascuna.
+
+    Aquest pre-càlcul deixa les gravacions a punt per al MeetingRecordingMatcher
+    (que necessita `start_at` per puntuar parells). Emet un senyal de progrés
+    per cada metadada resolta perquè la UI pugui mostrar "3/5 carregades".
+    """
+    progress = Signal(int, int)        # (carregades, total)
+    finished = Signal(list)            # list[PlaudRecording]
+    error = Signal(str)
+    not_authenticated = Signal()
+
+    def __init__(self, client, target_date, parent=None):
+        super().__init__(parent)
+        self.client = client
+        self.target_date = target_date
+
+    def run(self):
+        try:
+            recordings = self.client.list_for_date(self.target_date)
+            total = len(recordings)
+            self.progress.emit(0, total)
+            for i, rec in enumerate(recordings, start=1):
+                if rec.start_at is None:
+                    rec.start_at = self.client.get_start_at_utc(rec.file_id)
+                self.progress.emit(i, total)
+            self.finished.emit(recordings)
+        except PlaudNotAuthenticated:
+            self.not_authenticated.emit()
+        except (PlaudCLINotInstalled, PlaudError) as e:
+            logger.exception("PlaudListWorker error")
+            self.error.emit(str(e))
+        except Exception as e:
+            logger.exception("PlaudListWorker unexpected error")
+            self.error.emit(str(e))
+
+
+class PlaudTranscriptWorker(QThread):
+    """Baixa la transcripció d'una gravació Plaud concreta."""
+    finished = Signal(str, str)        # (file_id, transcript)
+    error = Signal(str, str)           # (file_id, msg)
+    not_authenticated = Signal()
+
+    def __init__(self, client, file_id, parent=None):
+        super().__init__(parent)
+        self.client = client
+        self.file_id = file_id
+
+    def run(self):
+        try:
+            text = self.client.get_transcript(self.file_id)
+            self.finished.emit(self.file_id, text)
+        except PlaudNotAuthenticated:
+            self.not_authenticated.emit()
+        except (PlaudCLINotInstalled, PlaudError) as e:
+            logger.exception("PlaudTranscriptWorker error")
+            self.error.emit(self.file_id, str(e))
+        except Exception as e:
+            logger.exception("PlaudTranscriptWorker unexpected error")
+            self.error.emit(self.file_id, str(e))
