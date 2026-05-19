@@ -2,7 +2,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTextEdit,
     QPushButton, QLabel, QCheckBox, QLineEdit
 )
-from PySide6.QtGui import QTextCharFormat, QColor, QFont, QTextCursor, QFontDatabase
+from PySide6.QtGui import QTextCharFormat, QColor, QFont, QTextCursor, QTextDocument, QFontDatabase
 from PySide6.QtCore import Qt, QTimer
 
 
@@ -32,6 +32,11 @@ class InlineCorrectionEditor(QWidget):
     _COL_PENDING  = QColor('#FFE082')
     _COL_ACCEPTED = QColor('white')
     _COL_REJECTED = QColor('white')
+
+    _FIND_FLAGS = (
+        QTextDocument.FindFlag.FindCaseSensitively
+        | QTextDocument.FindFlag.FindWholeWords
+    )
 
     def __init__(self, transcript: str, corrections: list[dict], parent=None,
                  threshold_auto: float = 1.1):
@@ -75,13 +80,27 @@ class InlineCorrectionEditor(QWidget):
         remaining = []
         for c in self._corrections:
             if c.get('confiança', 0) >= threshold:
-                cursor = self.editor.document().find(c['original'])
-                if not cursor.isNull():
-                    cursor.insertText(c['correccio'])
+                self._replace_all_whole_word(c['original'], c['correccio'])
                 # no s'afegeix a remaining: desapareix de la llista
             else:
                 remaining.append(c)
         self._corrections = remaining
+
+    # ── Reemplaçament global ─────────────────────────────────────────────────
+
+    def _replace_all_whole_word(self, find_text: str, replace_text: str) -> int:
+        """Reemplaça totes les ocurrències de find_text (paraula sencera,
+        case-sensitive) per replace_text al document. Retorna el nombre de canvis."""
+        if not find_text:
+            return 0
+        doc = self.editor.document()
+        cursor = doc.find(find_text, 0, self._FIND_FLAGS)
+        count = 0
+        while not cursor.isNull():
+            cursor.insertText(replace_text)
+            count += 1
+            cursor = doc.find(find_text, cursor, self._FIND_FLAGS)
+        return count
 
     # ── Nav bar (3 files) ────────────────────────────────────────────────────
 
@@ -174,15 +193,11 @@ class InlineCorrectionEditor(QWidget):
             return
 
         if c['status'] == 'rejected':
-            # Desfer rebuig: cercar original i substituir per correcció
-            cursor = self.editor.document().find(c['original'])
-            if not cursor.isNull():
-                cursor.insertText(c['correccio'])
+            # Desfer rebuig: substituir original per correcció a totes les ocurrències
+            self._replace_all_whole_word(c['original'], c['correccio'])
         else:  # pending / not_found
-            cursor = self.editor.document().find(c['original'])
-            if not cursor.isNull():
-                cursor.insertText(c['correccio'])
-            else:
+            replaced = self._replace_all_whole_word(c['original'], c['correccio'])
+            if replaced == 0:
                 c['status'] = 'not_found'
                 self._refresh()
                 return
@@ -208,10 +223,8 @@ class InlineCorrectionEditor(QWidget):
             return
 
         if c['status'] == 'accepted':
-            # Desfer acceptació: cercar correcció i restaurar original
-            cursor = self.editor.document().find(c['correccio'])
-            if not cursor.isNull():
-                cursor.insertText(c['original'])
+            # Desfer acceptació: restaurar original a totes les ocurrències
+            self._replace_all_whole_word(c['correccio'], c['original'])
 
         c['status'] = 'rejected'
         c['memorize'] = False
@@ -325,7 +338,7 @@ class InlineCorrectionEditor(QWidget):
         # Pas 1: detectar correccions pendents que l'usuari ha editat manualment
         nav_needs_update = False
         for i, c in enumerate(self._corrections):
-            if c['status'] == 'pending' and doc.find(c['original']).isNull():
+            if c['status'] == 'pending' and doc.find(c['original'], 0, self._FIND_FLAGS).isNull():
                 c['status'] = 'manual'
                 if i == self._current:
                     nav_needs_update = True
@@ -366,13 +379,13 @@ class InlineCorrectionEditor(QWidget):
             if is_current:
                 fmt.setFontWeight(700)
 
-            cursor = doc.find(search_text)
+            cursor = doc.find(search_text, 0, self._FIND_FLAGS)
             while not cursor.isNull():
                 sel = QTextEdit.ExtraSelection()
                 sel.format = fmt
                 sel.cursor = cursor
                 selections.append(sel)
-                cursor = doc.find(search_text, cursor)
+                cursor = doc.find(search_text, cursor, self._FIND_FLAGS)
 
         self.editor.setExtraSelections(selections)
 
@@ -388,7 +401,7 @@ class InlineCorrectionEditor(QWidget):
         else:
             return  # not_found: no podem fer scroll
 
-        found = self.editor.document().find(search_text)
+        found = self.editor.document().find(search_text, 0, self._FIND_FLAGS)
         if found.isNull():
             return
         # Cursor sense selecció per no sobreposar al highlight

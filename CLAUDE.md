@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Project Does
 
-PySide6 GUI app that integrates Google Calendar, Gmail and an Obsidian vault to manage meeting notes and project tracking. It fetches meetings/emails, lets the user paste or import transcripts, corrects them with an LLM, processes them into structured Obsidian notes, and initializes project documents.
+PySide6 GUI app that integrates Google Calendar, Gmail, **Plaud** (audio recordings + transcripcions via CLI) i un Obsidian vault per gestionar notes de reunions i seguiment de projectes. Carrega reunions/correus, baixa transcripcions de Plaud (o permet paste manual com a fallback), les corregeix amb un LLM, les processa en notes Obsidian estructurades i inicialitza documents de projectes.
 
 ## Commands
 
@@ -14,6 +14,9 @@ uv sync
 
 # Run the GUI app
 uv run python src/gui/app.py
+
+# Run unit tests
+uv run python -m unittest discover -s tests
 ```
 
 ## Required Configuration
@@ -21,6 +24,7 @@ uv run python src/gui/app.py
 - `.env` — must contain `OBSIDIAN_VAULT_PATH=/path/to/vault` and `LLM_MODELH=<litellm model id>`
 - `config/google_credentials.json` — OAuth2 credentials from Google Cloud Console (Calendar + Gmail API)
 - `config/token.pickle` — auto-generated on first run after OAuth browser flow
+- **Plaud CLI**: `npm install -g @plaud-ai/cli` + un cop a la vida `plaud login` (OAuth al navegador). El binari ha d'estar al `PATH`.
 
 ## Note Lifecycle (filename suffixes)
 
@@ -55,7 +59,7 @@ Reunions/
 
 | Botó | Wizard | Descripció |
 |------|--------|------------|
-| Entrar transcripcions | `wizard_transcripcio.py` | Selecciona reunió de Google Calendar, escull carpeta destí al vault, enganxa transcripció i desa la nota. |
+| Entrar transcripcions | `wizard_transcripcio.py` | Pàgina 0 = `PairingView` (aparella reunions de Calendar amb gravacions de Plaud d'un dia). Itera sobre cada parell + cada gravació orfe: tria carpeta destí, descarrega transcripció de Plaud (o paste manual com a fallback), desa la nota. |
 | Entrar correus | `wizard_correus.py` | Importa fils de Gmail i els desa com a notes de correu al vault. |
 | Entrar fitxers | `wizard_fitxers.py` | Copia fitxers externs a una carpeta del vault. |
 | Correcció transcripcions | `wizard_correccio.py` | Batch: detecta errors de transcripció en notes sense corregir via LLM + vocabulari i mostra l'editor inline. |
@@ -67,10 +71,22 @@ Reunions/
 ## Architecture — Key Modules (`src/`)
 
 **`calendar_matcher.py` — `CalendarMatcher`**
-Google Calendar OAuth (credentials a `config/`). `_parse_event(event)` retorna `{title, start, end, duration, attendees}`.
+Google Calendar OAuth (credentials a `config/`). `_parse_event(event)` retorna `{title, start, end, duration, attendees}`. El `start` és tz-aware (ISO de Google amb `Z` o offset).
 
 **`gmail_fetcher.py` — `GmailFetcher`**
 Accés a Gmail via la mateixa OAuth. `fetch_threads(date_from, date_to)` retorna fils de correu.
+
+**`plaud_client.py` — `PlaudClient`**
+Embolcall del CLI `plaud` (instal·lat globalment via npm). Mètodes:
+- `is_authenticated()` — comprova `plaud me`.
+- `list_for_date(date)` — `list[PlaudRecording]` per a un dia (filtra `today` o `recent -d N`).
+- `get_file_metadata(id)` — dict clau-valor des de `plaud file <id>`.
+- `get_start_at_utc(id)` — `datetime` tz-aware UTC (la constant `PLAUD_TIMEZONE = timezone.utc` documenta l'assumpció; verificat 2026-05-18).
+- `get_transcript(id)` — text amb timestamps `[MM:SS - MM:SS] Speaker: …` (capçalera del CLI eliminada).
+- Excepcions tipades: `PlaudCLINotInstalled`, `PlaudNotAuthenticated`, `PlaudError`.
+
+**`meeting_recording_matcher.py`**
+Funció pura `match(events, recordings)` → `MatchResult(pairs, unmatched_events, unmatched_recordings)`. Score combinat per parell: `0.85·temps + 0.15·durada`. Score temporal per trams (0-5 min = 1.0, 5-30 min lineal a 0.5, 30-60 min lineal a 0, >60 min = 0; offset 0 short-circuiteja a 0 ignorant la durada). Llindar AUTO ≥ 0.9, SUGGESTED ≥ 0.3. Assignació greedy 1:1. `PairStatus` = `AUTO` / `SUGGESTED` / `MANUAL` (l'últim només el produeix la UI, no el matcher).
 
 **`obsidian_writer.py` — `ObsidianWriter`**
 Totes les operacions de lectura/escriptura al vault. Mètodes principals:
@@ -129,11 +145,37 @@ Llegeix `Vocabulari.md` i retorna el vocabulari com a dict per seccions. `load_c
 - `MeetingAnalyzerWorker` — analitza reunions de seguiment (suporta `brief=True`)
 - `SummaryWorker` — genera resums via litellm
 - `ProjectInitWorker` — genera resum de projecte via litellm (transcripció + fitxers)
+- `PlaudListWorker` — llista gravacions Plaud d'un dia i resol `start_at` UTC per cadascuna. Signals: `progress(done, total)`, `finished(list)`, `error(str)`, `not_authenticated()`.
+- `PlaudTranscriptWorker` — baixa transcripció d'una gravació. Signals: `finished(file_id, text)`, `error(file_id, msg)`, `not_authenticated()`. Inclou `file_id` per descartar resultats stale quan l'usuari avança ràpid.
 
 **`gui/widgets/`**
 - `inline_correction_editor.py` — editor inline amb highlights de correccions i navegació. Estats: `pending` (groc), `accepted` (verd), `rejected` (gris), `manual` (usuari ha editat), `not_found`. API pública: `get_final_text()`, `get_memorize_list()`, `get_accepted_words()`. El checkbox "Memoritzar" permet marcar correccions per desar a `semantic_memory.json`.
 - `correction_checklist.py` — llista de correccions amb checkboxes d'aprovació i opció de memoritzar.
 - `transcript_editor.py` — editor de transcripció amb paste i net.
+- `pairing_view.py` — `PairingView`: pàgina 0 del wizard de transcripcions. Selector de data, dues taules (Calendar / Plaud) carregades en paral·lel, auto-match via `MeetingRecordingMatcher`, llista de parells confirmats amb desfer i aparellament manual. Codi de color de fila: verd fosc (AUTO), taronja fosc (SUGGESTED), blau fosc (MANUAL), tots amb text blanc explícit per llegibilitat en macOS dark mode. API pública: `get_state()` → `(pairs, unmatched_events, unmatched_recordings)`.
+
+## Wizard Transcripcio — Flux Detallat
+
+**3 pàgines** (`QStackedWidget`) + iteració interna:
+
+1. **PairingView** (pàg. 0) — selector de data, càrrega paral·lela de `CalendarWorker` + `PlaudListWorker`, auto-match, ajustament manual.
+2. **En clicar Endavant**: es construeix la cua `work_queue = pairs + unmatched_recordings` (les reunions sense gravació es descarten). Comença la iteració.
+3. Per cada item de la cua, **pàg. 1** mostra "Element X de Y — Títol" + arbre de carpetes. El tree mostra com a **seleccionables** només les carpetes que contenen una subcarpeta `Reunions/`; la resta apareixen en gris com a contenidors organitzatius. No es descendeix dins una carpeta amb `Reunions/` (és destinació final).
+4. **Pàg. 2**: títol del item + barra de progrés mentre `PlaudTranscriptWorker` descarrega. Quan acaba, l'editor s'omple amb la transcripció (timestamps + parlants). L'usuari pot editar abans de desar.
+5. **Desar** → `obsidian.create_simple_note(meeting_dict, text, target_dir)`. Per a parells `Pair`, `meeting_dict = pair.event`. Per a `PlaudRecording` orfes, es fabrica `{title: rec.name, start: rec.start_at, end: start+duration, attendees: []}`. Després s'avança automàticament al següent item.
+6. Quan la cua és buida, la finestra es tanca (sense diàleg final).
+
+**Protecció contra workers stale**: `PlaudTranscriptWorker` emet el `file_id` als signals; si l'usuari ha avançat ràpid abans que torni el worker, el resultat s'ignora.
+
+**Enrere**: només actiu a la pàg. 2 (per re-triar carpeta sense reaparellar). No es pot tornar a la pàgina 0 un cop ha començat la iteració.
+
+## Tests
+
+Tests unitaris a `tests/` amb `unittest` (sense pytest). Cobreixen `plaud_client.py` (parsing del CLI + gestió d'errors) i `meeting_recording_matcher.py` (scoring + assignament).
+
+```bash
+uv run python -m unittest discover -s tests
+```
 
 ## Wizard Correccio — Flux Detallat
 
