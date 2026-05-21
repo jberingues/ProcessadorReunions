@@ -5,7 +5,7 @@ MeetingRecordingMatcher i permet a l'usuari ajustar manualment els parells.
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from PySide6.QtCore import Qt, QDate, Signal
@@ -86,6 +86,7 @@ class PairingView(QWidget):
         self._plaud_worker: Optional[PlaudListWorker] = None
         self._cal_done = False
         self._plaud_done = False
+        self._syncing = False
 
         self._build_ui()
 
@@ -137,20 +138,24 @@ class PairingView(QWidget):
         self.btn_pair.clicked.connect(self._pair_selected)
         self.btn_pair.setEnabled(False)
         actions.addWidget(self.btn_pair)
-        self.btn_unpair = QPushButton("Desfer parell seleccionat")
-        self.btn_unpair.clicked.connect(self._unpair_selected)
-        self.btn_unpair.setEnabled(False)
-        actions.addWidget(self.btn_unpair)
         actions.addStretch()
         layout.addLayout(actions)
 
         layout.addWidget(QLabel("Parells confirmats:"))
         self.list_pairs = QListWidget()
-        self.list_pairs.itemSelectionChanged.connect(self._update_unpair_btn)
+        self.list_pairs.itemSelectionChanged.connect(self._on_pair_list_selection)
         layout.addWidget(self.list_pairs, stretch=1)
 
-        self.table_cal.itemSelectionChanged.connect(self._update_pair_btn)
-        self.table_plaud.itemSelectionChanged.connect(self._update_pair_btn)
+        unpair_row = QHBoxLayout()
+        self.btn_unpair = QPushButton("Desfer parell seleccionat")
+        self.btn_unpair.clicked.connect(self._unpair_selected)
+        self.btn_unpair.setEnabled(False)
+        unpair_row.addWidget(self.btn_unpair)
+        unpair_row.addStretch()
+        layout.addLayout(unpair_row)
+
+        self.table_cal.itemSelectionChanged.connect(self._on_table_selection)
+        self.table_plaud.itemSelectionChanged.connect(self._on_table_selection)
 
     def _make_table(self, headers: list[str]) -> QTableWidget:
         t = QTableWidget()
@@ -159,8 +164,12 @@ class PairingView(QWidget):
         t.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         t.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         t.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        # Estira la 2a columna (títol/nom) — la més llarga
         t.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        # Força el color de selecció igual tant si la taula té focus com si no,
+        # evitant que la fila seleccionada es torni grisa en perdre el focus.
+        t.setStyleSheet(
+            "QTableWidget::item:selected { background-color: #1976D2; color: white; }"
+        )
         return t
 
     # ---------- Carregar dades ----------
@@ -236,6 +245,12 @@ class PairingView(QWidget):
             return
         self.progress.setVisible(False)
         self.btn_load.setEnabled(True)
+        # Ordena per hora ascendent
+        self.events.sort(key=lambda e: e["start"])
+        self.recordings.sort(
+            key=lambda r: r.start_at if r.start_at is not None
+            else datetime.min.replace(tzinfo=timezone.utc)
+        )
         # Auto-match
         result = match(self.events, self.recordings)
         self.pairs = list(result.pairs)
@@ -309,14 +324,15 @@ class PairingView(QWidget):
 
     def _refresh_pairs_list(self):
         self.list_pairs.clear()
-        for i, p in enumerate(self.pairs):
+        sorted_pairs = sorted(self.pairs, key=lambda p: p.event["start"])
+        for p in sorted_pairs:
             ev_title = p.event.get("title", "(sense títol)")
             ev_time = _fmt_local_time(p.event["start"])
             rec_time = _fmt_local_time(p.recording.start_at) if p.recording.start_at else "?"
             rec_name = p.recording.name
             label = f"{ev_time} {ev_title}  ←→  {rec_time} {rec_name}  [{self._status_text(p)}]"
             item = QListWidgetItem(label)
-            item.setData(Qt.ItemDataRole.UserRole, i)
+            item.setData(Qt.ItemDataRole.UserRole, p)  # objecte Pair (no índex)
             self.list_pairs.addItem(item)
 
     # ---------- Interaccions usuari ----------
@@ -342,8 +358,42 @@ class PairingView(QWidget):
         used_rec = {p.recording.file_id for p in self.pairs}
         self.btn_pair.setEnabled(id(ev) not in used_ev and rec.file_id not in used_rec)
 
-    def _update_unpair_btn(self):
-        self.btn_unpair.setEnabled(self.list_pairs.currentItem() is not None)
+    def _on_pair_list_selection(self):
+        """Quan es selecciona un parell a la llista, ressalta les files a les taules (i viceversa)."""
+        if self._syncing:
+            return
+        self._syncing = True
+        item = self.list_pairs.currentItem()
+        self.btn_unpair.setEnabled(item is not None)
+        if item is None:
+            self.table_cal.clearSelection()
+            self.table_plaud.clearSelection()
+        else:
+            pair = item.data(Qt.ItemDataRole.UserRole)
+            for row, ev in enumerate(self.events):
+                if id(ev) == id(pair.event):
+                    self.table_cal.selectRow(row)
+                    break
+            else:
+                self.table_cal.clearSelection()
+            for row, rec in enumerate(self.recordings):
+                if rec.file_id == pair.recording.file_id:
+                    self.table_plaud.selectRow(row)
+                    break
+            else:
+                self.table_plaud.clearSelection()
+        self._syncing = False
+        self._update_pair_btn()
+
+    def _on_table_selection(self):
+        """Quan l'usuari selecciona directament una fila a les taules, neteja la selecció de la llista."""
+        if self._syncing:
+            return
+        self._syncing = True
+        self.list_pairs.clearSelection()
+        self.btn_unpair.setEnabled(False)
+        self._syncing = False
+        self._update_pair_btn()
 
     def _pair_selected(self):
         ei = self._selected_event_index()
@@ -361,13 +411,12 @@ class PairingView(QWidget):
         item = self.list_pairs.currentItem()
         if item is None:
             return
-        idx = item.data(Qt.ItemDataRole.UserRole)
-        if 0 <= idx < len(self.pairs):
-            del self.pairs[idx]
+        pair = item.data(Qt.ItemDataRole.UserRole)
+        if pair in self.pairs:
+            self.pairs.remove(pair)
             self._refresh_tables()
             self._refresh_pairs_list()
             self._update_pair_btn()
-            self._update_unpair_btn()
 
     # ---------- API pública ----------
 
