@@ -177,6 +177,10 @@ Tests unitaris a `tests/` amb `unittest` (sense pytest). Cobreixen `plaud_client
 uv run python -m unittest discover -s tests
 ```
 
+**Regla**: cada vegada que s'afegeix funcionalitat nova, cal:
+1. Escriure un test nou per aquella funcionalitat a `tests/`.
+2. Executar tots els tests existents per verificar que no s'ha trencat res.
+
 ## Wizard Correccio — Flux Detallat
 
 **3 pàgines** (`QStackedWidget`):
