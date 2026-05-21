@@ -1,4 +1,6 @@
-from datetime import timedelta
+import difflib
+import unicodedata
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional, Union
 
@@ -20,6 +22,35 @@ from workers import PlaudTranscriptWorker
 # Una unitat de feina és un parell aparellat o una gravació orfe (sense reunió
 # al calendari). Les reunions sense gravació es descarten — no entren al flux.
 WorkItem = Union[Pair, PlaudRecording]
+
+_MATCH_THRESHOLD = 0.4
+
+
+def _normalize(text: str) -> str:
+    """Minúscules, sense accents, només alfanumèrics i espais."""
+    text = unicodedata.normalize('NFD', text.lower())
+    return ''.join(
+        c for c in text
+        if unicodedata.category(c) != 'Mn' and (c.isalnum() or c == ' ')
+    )
+
+
+def _folder_score(title: str, folder_name: str) -> float:
+    """Puntuació 0–1 de similitud entre el títol de l'event i el nom de carpeta."""
+    t = _normalize(title)
+    f = _normalize(folder_name)
+    if not f:
+        return 0.0
+    # La carpeta apareix íntegrament dins el títol
+    if f in t:
+        return 0.9
+    # Quantes paraules de la carpeta (≥3 chars) apareixen al títol
+    f_words = [w for w in f.split() if len(w) >= 3]
+    if f_words:
+        hits = sum(1 for w in f_words if w in t)
+        if hits:
+            return 0.5 + 0.4 * (hits / len(f_words))
+    return difflib.SequenceMatcher(None, t, f).ratio()
 
 
 class WizardTranscripcio(QDialog):
@@ -83,6 +114,7 @@ class WizardTranscripcio(QDialog):
         self.tree_dirs.setHeaderHidden(True)
         self.tree_dirs.setSelectionMode(QTreeWidget.SelectionMode.SingleSelection)
         self.tree_dirs.itemSelectionChanged.connect(self._on_tree_selection_changed)
+        self.tree_dirs.itemDoubleClicked.connect(self._on_tree_double_click)
         page_layout.addWidget(self.tree_dirs)
         self.stack.addWidget(page)
 
@@ -124,10 +156,42 @@ class WizardTranscripcio(QDialog):
                 item.setForeground(0, QColor(140, 140, 140))
                 self._add_tree_items(item, d)
 
+    def _auto_select_folder(self, title: str):
+        """Pre-selecciona la carpeta del tree més similar al títol, si supera el llindar."""
+        best_item = None
+        best_score = _MATCH_THRESHOLD
+
+        def walk(item):
+            nonlocal best_item, best_score
+            if item.data(0, Qt.ItemDataRole.UserRole) is not None:
+                score = _folder_score(title, item.text(0))
+                if score > best_score:
+                    best_score = score
+                    best_item = item
+            for i in range(item.childCount()):
+                walk(item.child(i))
+
+        root = self.tree_dirs.invisibleRootItem()
+        for i in range(root.childCount()):
+            walk(root.child(i))
+
+        if best_item is not None:
+            # Expandeix els avantpassats perquè l'ítem sigui visible
+            parent = best_item.parent()
+            while parent is not None:
+                parent.setExpanded(True)
+                parent = parent.parent()
+            self.tree_dirs.setCurrentItem(best_item)
+            self.tree_dirs.scrollToItem(best_item)
+
     def _on_tree_selection_changed(self):
         items = self.tree_dirs.selectedItems()
         self.selected_target_dir = items[0].data(0, Qt.ItemDataRole.UserRole) if items else None
         self._update_nav()
+
+    def _on_tree_double_click(self, item, _column):
+        if item.data(0, Qt.ItemDataRole.UserRole) is not None:
+            self._go_next()
 
     # -- Pàgina 2: transcripció --
 
@@ -205,9 +269,14 @@ class WizardTranscripcio(QDialog):
 
     def _start_iteration(self):
         pairs, _unmatched_events, unmatched_recs = self.pairing_view.get_state()
-        # Cua: primer els parells (ordenats per data del calendari implícitament
-        # pel matcher), després les gravacions orfes.
-        self.work_queue = list(pairs) + list(unmatched_recs)
+        work_items: list[WorkItem] = list(pairs) + list(unmatched_recs)
+        self.work_queue = sorted(
+            work_items,
+            key=lambda it: (
+                it.event["start"] if isinstance(it, Pair)
+                else (it.start_at or datetime.min.replace(tzinfo=timezone.utc))
+            ),
+        )
         if not self.work_queue:
             QMessageBox.information(
                 self, "Res a processar",
@@ -231,6 +300,7 @@ class WizardTranscripcio(QDialog):
         self.lbl_current_item_p2.setText(progress_text)
         self.transcript_editor.clear()
         self._populate_tree()
+        self._auto_select_folder(self._item_title(self.current_item))
         self._start_transcript_fetch()
         self.stack.setCurrentIndex(1)
         self._update_nav()
