@@ -343,9 +343,21 @@ class WizardCorreccio(QDialog):
         result = self.batch_results[self.reviewing_idx]
 
         corrected = self.inline_editor.get_final_text()
-        mem_list = self.inline_editor.get_memorize_list()
-        if result.meeting_dir and mem_list:
-            self._save_to_semantic_memory(result.meeting_dir, mem_list)
+
+        # Memoritzacions locals (semantic_memory.json d'aquesta sèrie)
+        series_list = self.inline_editor.get_memorize_series()
+        if result.meeting_dir and series_list:
+            self._save_to_semantic_memory(result.meeting_dir, series_list)
+
+        # Memoritzacions globals (alias al Vocabulari.md)
+        global_list = self.inline_editor.get_memorize_global()
+        if global_list:
+            self._save_to_global_vocabulary(global_list)
+
+        # Paraules validades com a correctes (termes principals al Vocabulari.md)
+        correct_words = self.inline_editor.get_correct_words()
+        if correct_words:
+            self._save_correct_terms_to_vocabulary(correct_words)
 
         self.obsidian.update_transcript(result.note['path'], corrected)
         self.obsidian.mark_as_corrected(result.note['path'])
@@ -355,6 +367,20 @@ class WizardCorreccio(QDialog):
 
         self.stack.setCurrentIndex(1)
         self._update_nav()
+
+    def _save_to_global_vocabulary(self, global_list):
+        """Afegeix aliases al Vocabulari.md unificat via VocabularyLoader.add_alias()."""
+        vocab_path = self.obsidian.vault / 'Reunions' / 'zConfig' / 'Vocabulari.md'
+        loader = VocabularyLoader(vocab_path)
+        for c in global_list:
+            loader.add_alias(c['original'], c['correccio'])
+
+    def _save_correct_terms_to_vocabulary(self, words):
+        """Afegeix paraules validades com a termes principals al Vocabulari.md."""
+        vocab_path = self.obsidian.vault / 'Reunions' / 'zConfig' / 'Vocabulari.md'
+        loader = VocabularyLoader(vocab_path)
+        for w in words:
+            loader.add_term(w)
 
     def _save_to_semantic_memory(self, meeting_dir, mem_list):
         import json

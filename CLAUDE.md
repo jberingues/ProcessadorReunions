@@ -51,8 +51,7 @@ Reunions/
       Reunions/
       Documentació/
   zConfig/
-    Vocabulari.md          # vocabulary for corrections + secció "## Configuració"
-    Canvis-Memoritzats.md  # memorized corrections (global)
+    Vocabulari.md          # vocabulari unificat: termes + aliases en sublistes + secció "## Configuració"
 ```
 
 ## GUI Wizard Flows (`src/gui/`)
@@ -101,7 +100,7 @@ Totes les operacions de lectura/escriptura al vault. Mètodes principals:
 
 **`transcript_corrector.py` — `TranscriptCorrector`**
 Constructor: `(vocab, semantic_memory_path=None, model=None, threshold_auto=0.85)`.
-- Carrega correccions memoritzades globals (`zConfig/Canvis-Memoritzats.md`) i locals (`semantic_memory.json` → `aliases`).
+- Carrega correccions memoritzades globals (aliases del `zConfig/Vocabulari.md` unificat, llegits via `VocabularyLoader.load_aliases()`) i locals (`semantic_memory.json` → `aliases`).
 - `detect(transcript, reference_transcript=None, semantic_context=None)` retorna `(transcript_amb_memoritzades, llista_correccions_noves)`. Cada correcció: `{original, correccio, motiu, frase, confiança}`. Pipeline intern:
   1. Aplica memoritzades (globals i locals) amb reemplaçament whole-word.
   2. Pre-pass fuzzy: `find_fuzzy_candidates` detecta candidates per similitud amb el vocabulari (Levenshtein normalitzat, llindar 0.6).
@@ -146,7 +145,22 @@ S'actualitza **només** quan l'usuari activa el flag "Memoritzar" en una correcc
 Constructor: `(vocab, model=None)`. Processa transcripcions de Daily Scrum via CrewAI. `process(transcript, attendees)` retorna `DailyScrumResult` (participants amb ahir/avui + altres temes). `format_markdown(result, meeting_title, date_str)` genera el markdown.
 
 **`vocabulary_loader.py` — `VocabularyLoader`**
-Llegeix `Vocabulari.md` i retorna el vocabulari com a dict per seccions. `load_config()` retorna claus de la secció `## Configuració` (e.g. `threshold_auto`).
+Llegeix el `Vocabulari.md` unificat (termes principals + aliases en sublistes indentades).
+- `load()` retorna `{secció: [termes_principals]}` — només els termes de primer nivell (compatible amb el codi existent).
+- `load_aliases()` retorna `{alias: terme_correcte}` per al corrector global. Si el terme conté `→`, `(...)` o `/`, retorna només la forma canònica (defensiu contra format antic).
+- `add_alias(alias, target_term)` escriu un nou alias al fitxer preservant format. Si `target_term` no existeix, es crea a la secció `## Altres (per revisar)`.
+- `add_term(term)` afegeix un terme principal sense aliases (per a paraules validades com a correctes). Sempre va a `## Altres (per revisar)`.
+- `load_config()` retorna les claus de la secció `## Configuració` (e.g. `threshold_auto`).
+- Format del fitxer:
+  ```
+  ## Secció
+  - Terme principal
+    - alias1
+    - alias2
+  - Altre terme
+  ## Configuració
+    - threshold_auto: 0.85    (entries indentades sense terme pare)
+  ```
 
 **`gui/workers.py` — QThread Workers**
 - `CalendarWorker` — carrega reunions de Google Calendar
@@ -161,7 +175,7 @@ Llegeix `Vocabulari.md` i retorna el vocabulari com a dict per seccions. `load_c
 - `PlaudTranscriptWorker` — baixa transcripció d'una gravació. Signals: `finished(file_id, text)`, `error(file_id, msg)`, `not_authenticated()`. Inclou `file_id` per descartar resultats stale quan l'usuari avança ràpid.
 
 **`gui/widgets/`**
-- `inline_correction_editor.py` — editor inline amb highlights de correccions i navegació. Estats: `pending` (groc), `accepted` (verd), `rejected` (gris), `manual` (usuari ha editat), `not_found`. API pública: `get_final_text()`, `get_memorize_list()`, `get_accepted_words()`. El checkbox "Memoritzar" permet marcar correccions per desar a `semantic_memory.json`. **Acceptar/rebutjar/auto-acceptar reemplacen totes les ocurrències de paraula sencera** (case-sensitive + `FindWholeWords`) via `_replace_all_whole_word`, coherent amb `TranscriptCorrector.apply()`. Conseqüència: si dues correccions comparteixen el mateix `original`, acceptar-ne una marca l'altra com a `manual` (perquè el seu `original` ja no és al text).
+- `inline_correction_editor.py` — editor inline amb highlights de correccions i navegació. Estats: `pending` (groc), `accepted` (verd), `validated` (blau clar, paraula confirmada com a correcta), `rejected` (gris), `manual` (usuari ha editat el transcript), `not_found`. API pública: `get_final_text()`, `get_memorize_global()`, `get_memorize_series()`, `get_correct_words()`, `get_accepted_words()`. La fila 2 mostra `"original" → [target editable]` — l'usuari pot **modificar la proposta** del LLM (QLineEdit) abans d'acceptar; el camp és read-only en estats que no siguin `pending`. La fila 3 té 3 botons d'acció: **✓ Acceptar** (aplica + opcionalment memoritza l'alias), **★ És correcta** (no toca el text, afegeix l'`original` al Vocabulari com a terme principal perquè no es torni a proposar), **✗ Rebutjar** (no toca res); a la dreta, 3 radio buttons d'scope per a memorització d'alias: **Cap** (default, no acumula brossa), **Aquesta sèrie** (alias al `semantic_memory.json` local), **Sempre** (alias al `Vocabulari.md` global). L'scope no aplica a "És correcta" (sempre va al Vocabulari). **Acceptar/rebutjar/auto-acceptar reemplacen totes les ocurrències de paraula sencera** (case-sensitive + `FindWholeWords`) via `_replace_all_whole_word`, coherent amb `TranscriptCorrector.apply()`. Conseqüència: si dues correccions comparteixen el mateix `original`, acceptar-ne una marca l'altra com a `manual` (perquè el seu `original` ja no és al text).
 - `correction_checklist.py` — llista de correccions amb checkboxes d'aprovació i opció de memoritzar.
 - `transcript_editor.py` — editor de transcripció amb paste i net.
 - `pairing_view.py` — `PairingView`: pàgina 0 del wizard de transcripcions. Selector de data, dues taules (Calendar / Plaud) carregades en paral·lel, auto-match via `MeetingRecordingMatcher`, llista de parells confirmats amb desfer i aparellament manual. Codi de color de fila: verd fosc (AUTO), taronja fosc (SUGGESTED), blau fosc (MANUAL), tots amb text blanc explícit per llegibilitat en macOS dark mode. API pública: `get_state()` → `(pairs, unmatched_events, unmatched_recordings)`.

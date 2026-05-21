@@ -55,17 +55,6 @@ EXEMPLE DE TRANSCRIPCIÓ JA CORREGIDA (reunió anterior de la mateixa sèrie, us
 {reference_transcript}
 """
 
-        hints_section = ''
-        if fuzzy_candidates:
-            hints_lines = [
-                f'- "{c["original"]}" podria ser "{c["correccio"]}" (similitud {c["confiança"]:.2f})'
-                for c in fuzzy_candidates
-            ]
-            hints_section = f"""
-CANDIDATES DETECTADES AUTOMÀTICAMENT (similitud fonètica amb el vocabulari).
-Valida-les pel context i, si són correctes, inclou-les a la resposta amb la teva pròpia confiança:
-{chr(10).join(hints_lines)}
-"""
 
         agent = Agent(
             role="Corrector de transcripcions",
@@ -86,7 +75,7 @@ TASCA: Revisa la transcripció i detecta TOTES les paraules o frases que probabl
 VOCABULARI DE L'EMPRESA:
 {vocab_text}
 {semantic_section}
-{ref_section}{hints_section}TRANSCRIPCIÓ:
+{ref_section}TRANSCRIPCIÓ:
 {transcript}
 
 Per cada possible error, indica:
@@ -102,6 +91,7 @@ Per cada possible error, indica:
 
 IMPORTANT: No proposis cap correcció si el terme correcte del vocabulari ja apareix literalment a la transcripció. Per exemple, si "OTC" ja és al text, no cal proposar canviar "TC" per "OTC".
 IMPORTANT: L'"original" ha de ser sempre una paraula o frase sencera, mai una part d'una paraula. Per exemple, si veus "acabo", no proposis corregir "cabo" perquè és una subcadena d'una paraula més llarga.
+IMPORTANT: Sigues CONSERVADOR. Si l'"original" és una paraula vàlida en català o castellà i té sentit pel context de la frase, NO la proposis com a error. Prefereix passar per alt un error potencial abans que generar una proposta falsa. Només proposa quan tinguis evidència clara que la paraula no encaixa al context tècnic de la reunió.
 
 Retorna ÚNICAMENT un array JSON (sense cap text addicional):
 [{{"original": "...", "correccio": "...", "motiu": "...", "frase": "...", "confiança": 0.95}}]
@@ -145,6 +135,12 @@ Si no hi ha errors, retorna [].
             and 'correccio' in c
             and is_whole_word(c['original'], transcript)
         ]
+
+        # Filtre de confiança: descarta propostes especulatives del LLM (<0.5).
+        # Trade-off: perdem alguns errors detectats amb dubtes, però reduïm
+        # falsos positius molestos. Empíricament, 30-40% de propostes amb
+        # confiança baixa eren paraules legítimes fora de context.
+        corrections = [c for c in corrections if c.get('confiança', 1.0) >= 0.5]
 
         # Filtre fonètic: descarta correccions massa diferents (probablement
         # substitucions semàntiques que el LLM ha proposat per compte propi).
@@ -193,22 +189,21 @@ Si no hi ha errors, retorna [].
         )
 
     def _load_global_memorized(self) -> dict:
+        """Aliases globals des del Vocabulari.md unificat (sublistes indentades).
+
+        Cerca `zConfig/Vocabulari.md` pujant fins a 6 nivells de directori i
+        delega el parsing a `VocabularyLoader.load_aliases()`.
+        """
         if not self.semantic_memory_path:
             return {}
+        from vocabulary_loader import VocabularyLoader
         current = self.semantic_memory_path.parent
         for _ in range(6):
-            candidate = current / 'zConfig' / 'Canvis-Memoritzats.md'
+            candidate = current / 'zConfig' / 'Vocabulari.md'
             if candidate.exists():
-                break
+                return VocabularyLoader(candidate).load_aliases()
             current = current.parent
-        else:
-            return {}
-        result = {}
-        for line in candidate.read_text(encoding='utf-8').splitlines():
-            m = re.match(r'^-\s+(.+?)\s+→\s+(.+)$', line)
-            if m:
-                result[m.group(1)] = m.group(2)
-        return result
+        return {}
 
     def _load_local_memorized(self) -> dict:
         if not self.semantic_memory_path or not self.semantic_memory_path.exists():

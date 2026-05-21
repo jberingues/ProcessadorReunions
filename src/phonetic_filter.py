@@ -78,7 +78,7 @@ def is_likely_phonetic(original: str, correccio: str, max_distance: float = 0.75
 
 
 def find_fuzzy_candidates(transcript: str, vocab_terms: list[str],
-                          min_similarity: float = 0.6,
+                          min_similarity: float = 0.7,
                           min_word_length: int = 4) -> list[dict]:
     """Pre-pass: per a cada terme del vocabulari, busca paraules del transcript
     fonèticament similars que NO siguin literalment el terme.

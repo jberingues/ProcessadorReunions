@@ -1,9 +1,10 @@
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTextEdit,
-    QPushButton, QLabel, QCheckBox, QLineEdit
+    QPushButton, QLabel, QRadioButton, QButtonGroup, QLineEdit
 )
 from PySide6.QtGui import QTextCharFormat, QColor, QFont, QTextCursor, QTextDocument, QFontDatabase
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, QRegularExpression
+import re as _re
 
 
 class InlineCorrectionEditor(QWidget):
@@ -18,6 +19,8 @@ class InlineCorrectionEditor(QWidget):
       pending   : pendent de revisió
       accepted  : acceptada (highlight verd sobre 'correccio')
       rejected  : rebutjada (highlight gris sobre 'original')
+      validated : l'usuari ha confirmat que la paraula original és correcta
+                  (s'afegirà al Vocabulari com a terme principal, no és error)
       manual    : l'usuari ha editat el text i l'original ja no existeix
       not_found : l'original no s'ha trobat en intentar aplicar la correcció
 
@@ -41,8 +44,10 @@ class InlineCorrectionEditor(QWidget):
     def __init__(self, transcript: str, corrections: list[dict], parent=None,
                  threshold_auto: float = 1.1):
         super().__init__(parent)
-        self._corrections = [dict(c, status='pending', memorize=False) for c in corrections]
-        self._memorized: list[dict] = []
+        # scope per correcció: 'none' (no memoritzar) | 'series' (semantic_memory.json local)
+        # | 'global' (alias al Vocabulari.md). Per defecte 'none' per evitar acumulació
+        # de brossa per inèrcia — l'usuari ha de triar conscientment.
+        self._corrections = [dict(c, status='pending', scope='none') for c in corrections]
         self._current = 0 if corrections else -1
 
         layout = QVBoxLayout(self)
@@ -90,17 +95,32 @@ class InlineCorrectionEditor(QWidget):
 
     def _replace_all_whole_word(self, find_text: str, replace_text: str) -> int:
         """Reemplaça totes les ocurrències de find_text (paraula sencera,
-        case-sensitive) per replace_text al document. Retorna el nombre de canvis."""
+        case-sensitive) per replace_text al document. Retorna el nombre de canvis.
+
+        Per a frases multi-paraula usa regex amb word boundaries als extrems,
+        perquè QTextDocument.FindWholeWords no funciona bé amb cadenes que
+        contenen espais.
+        """
         if not find_text:
             return 0
         doc = self.editor.document()
-        cursor = doc.find(find_text, 0, self._FIND_FLAGS)
+        cursor = self._find_in_doc(doc, find_text, 0)
         count = 0
         while not cursor.isNull():
             cursor.insertText(replace_text)
             count += 1
-            cursor = doc.find(find_text, cursor, self._FIND_FLAGS)
+            cursor = self._find_in_doc(doc, find_text, cursor)
         return count
+
+    def _find_in_doc(self, doc, find_text: str, start):
+        """Cerca find_text al document respectant word boundaries. Funciona
+        tant per a paraules soles com per a frases multi-paraula."""
+        if ' ' not in find_text:
+            return doc.find(find_text, start, self._FIND_FLAGS)
+        # Frase amb espais: regex amb límits de paraula als extrems
+        pattern = r'(?<!\w)' + _re.escape(find_text) + r'(?!\w)'
+        qre = QRegularExpression(pattern)
+        return doc.find(qre, start)
 
     # ── Nav bar (3 files) ────────────────────────────────────────────────────
 
@@ -129,11 +149,28 @@ class InlineCorrectionEditor(QWidget):
         row1.addStretch()
         parent_layout.addLayout(row1)
 
-        # Fila 2: descripció de la correcció (text complet)
-        self.lbl_correction = QLabel()
-        self.lbl_correction.setWordWrap(True)
-        self.lbl_correction.setStyleSheet("padding: 2px 0;")
-        parent_layout.addWidget(self.lbl_correction)
+        # Fila 2: descripció de la correcció amb el target editable
+        # L'usuari pot modificar la proposta del LLM abans d'acceptar (només en
+        # estat 'pending'). En altres estats el camp és read-only.
+        row2 = QHBoxLayout()
+        row2.setSpacing(6)
+
+        self.lbl_original = QLabel()
+        self.lbl_original.setStyleSheet("padding: 2px 0;")
+
+        self.edit_correccio = QLineEdit()
+        self.edit_correccio.setMinimumWidth(150)
+        self.edit_correccio.setMaximumWidth(280)
+        self.edit_correccio.textEdited.connect(self._on_correccio_edited)
+
+        self.lbl_meta = QLabel()
+        self.lbl_meta.setStyleSheet("color:#666; padding: 2px 0;")
+
+        row2.addWidget(self.lbl_original)
+        row2.addWidget(self.edit_correccio)
+        row2.addWidget(self.lbl_meta)
+        row2.addStretch()
+        parent_layout.addLayout(row2)
 
         # Fila 3: botons + estat
         row3 = QHBoxLayout()
@@ -145,6 +182,16 @@ class InlineCorrectionEditor(QWidget):
         )
         self.btn_accept.clicked.connect(self._accept_current)
 
+        self.btn_validate = QPushButton("★ És correcta")
+        self.btn_validate.setStyleSheet(
+            "background:#1976D2; color:white; padding:4px 10px;"
+        )
+        self.btn_validate.setToolTip(
+            "La paraula original ja és correcta. No la canviïs al text però "
+            "afegeix-la al Vocabulari perquè no es torni a proposar."
+        )
+        self.btn_validate.clicked.connect(self._validate_current)
+
         self.btn_reject = QPushButton("✗ Rebutjar")
         self.btn_reject.setStyleSheet(
             "background:#F44336; color:white; padding:4px 10px;"
@@ -153,22 +200,33 @@ class InlineCorrectionEditor(QWidget):
 
         self.lbl_status = QLabel()
 
-        self.chk_mem = QCheckBox()
-        self.chk_mem.stateChanged.connect(self._on_mem_checked)
-        self.lbl_mem_prefix = QLabel()
-        self.lbl_mem_prefix.setStyleSheet("color:#555; font-style:italic;")
-        self.edit_mem_correccio = QLineEdit()
-        self.edit_mem_correccio.setFixedWidth(160)
-        self.edit_mem_correccio.setStyleSheet("font-style:italic;")
-        self.edit_mem_correccio.textChanged.connect(self._on_mem_correccio_changed)
+        # Memoritzar: 3 opcions de scope. Per defecte 'Cap' (no acumular brossa).
+        self.lbl_mem_prefix = QLabel("Memoritzar:")
+        self.lbl_mem_prefix.setStyleSheet("color:#555;")
+
+        self.rb_none = QRadioButton("Cap")
+        self.rb_series = QRadioButton("Aquesta sèrie")
+        self.rb_global = QRadioButton("Sempre")
+        self.rb_none.setToolTip("Aplica només a aquesta transcripció (default)")
+        self.rb_series.setToolTip("Recordar al semantic_memory.json d'aquesta sèrie")
+        self.rb_global.setToolTip("Recordar al Vocabulari.md global (totes les reunions)")
+
+        self._scope_group = QButtonGroup(self)
+        self._scope_group.addButton(self.rb_none)
+        self._scope_group.addButton(self.rb_series)
+        self._scope_group.addButton(self.rb_global)
+        self.rb_none.setChecked(True)
+        self._scope_group.buttonClicked.connect(self._on_scope_changed)
 
         row3.addWidget(self.btn_accept)
+        row3.addWidget(self.btn_validate)
         row3.addWidget(self.btn_reject)
         row3.addWidget(self.lbl_status)
         row3.addStretch()
-        row3.addWidget(self.chk_mem)
         row3.addWidget(self.lbl_mem_prefix)
-        row3.addWidget(self.edit_mem_correccio)
+        row3.addWidget(self.rb_none)
+        row3.addWidget(self.rb_series)
+        row3.addWidget(self.rb_global)
         parent_layout.addLayout(row3)
 
     # ── Navegació ────────────────────────────────────────────────────────────
@@ -203,12 +261,32 @@ class InlineCorrectionEditor(QWidget):
                 return
 
         c['status'] = 'accepted'
+        # L'scope decidit es preserva (es llegirà al desar la revisió)
 
-        if c.get('memorize', False):
-            if not any(m['original'] == c['original'] for m in self._memorized):
-                self._memorized.append({'original': c['original'], 'correccio': c['correccio']})
+        if was_pending:
+            self._move_to_next_pending()
+        else:
+            self._refresh()
 
-        c['memorize'] = False
+    def _validate_current(self):
+        """Marca l'`original` com a terme correcte del vocabulari.
+
+        No toca el text (la paraula ja és correcta tal com és).
+        S'afegirà a Vocabulari.md en desar la revisió.
+        Si la correcció ja s'havia acceptat, primer cal desfer la substitució.
+        """
+        c = self._corrections[self._current]
+        was_pending = c['status'] == 'pending'
+
+        if c['status'] == 'validated':
+            return
+
+        if c['status'] == 'accepted':
+            # Desfer acceptació: restaurar original a totes les ocurrències
+            self._replace_all_whole_word(c['correccio'], c['original'])
+
+        c['status'] = 'validated'
+        c['scope'] = 'none'  # validated sempre va a Vocabulari, no usa scope
 
         if was_pending:
             self._move_to_next_pending()
@@ -227,22 +305,33 @@ class InlineCorrectionEditor(QWidget):
             self._replace_all_whole_word(c['correccio'], c['original'])
 
         c['status'] = 'rejected'
-        c['memorize'] = False
+        c['scope'] = 'none'  # rebutjar implica no memoritzar
 
         if was_pending:
             self._move_to_next_pending()
         else:
             self._refresh()
 
-    def _on_mem_checked(self, state: int):
-        if 0 <= self._current < len(self._corrections):
-            self._corrections[self._current]['memorize'] = bool(state)
-
-    def _on_mem_correccio_changed(self, text: str):
+    def _on_correccio_edited(self, text: str):
+        """L'usuari ha modificat la proposta de correcció (QLineEdit)."""
         if 0 <= self._current < len(self._corrections):
             c = self._corrections[self._current]
-            if c['status'] == 'manual':
+            # Permetem edició mentre no sigui un estat tancat
+            if c['status'] not in ('accepted', 'rejected', 'validated'):
                 c['correccio'] = text
+                # El text de memorització fa referència al target → actualitzar
+                self.lbl_mem_prefix.setText(
+                    f'Memoritzar "{c["original"]}" → "{text}":'
+                )
+
+    def _on_scope_changed(self, button):
+        if 0 <= self._current < len(self._corrections):
+            if button is self.rb_global:
+                self._corrections[self._current]['scope'] = 'global'
+            elif button is self.rb_series:
+                self._corrections[self._current]['scope'] = 'series'
+            else:
+                self._corrections[self._current]['scope'] = 'none'
 
     def _move_to_next_pending(self):
         n = len(self._corrections)
@@ -275,48 +364,63 @@ class InlineCorrectionEditor(QWidget):
             c = self._corrections[self._current]
             motiu = c.get('motiu', '')
             confiança = c.get('confiança')
-            text = f'"{c["original"]}"  →  "{c["correccio"]}"'
+
+            self.lbl_original.setText(f'"{c["original"]}"  →')
+
+            # Camp editable amb el target. blockSignals per evitar el handler
+            # quan és canvi programàtic (navegació entre correccions).
+            self.edit_correccio.blockSignals(True)
+            if self.edit_correccio.text() != c['correccio']:
+                self.edit_correccio.setText(c['correccio'])
+            # Editable si encara es pot acceptar (no és definitivament accepted/
+            # rejected/validated). Inclou 'manual' i 'not_found' perquè l'usuari
+            # pugui retallar la proposta i tornar a intentar acceptar-la.
+            self.edit_correccio.setReadOnly(c['status'] in ('accepted', 'rejected', 'validated'))
+            self.edit_correccio.blockSignals(False)
+
             parts = []
             if confiança is not None:
                 parts.append(f'confiança: {confiança:.0%}')
             if motiu:
                 parts.append(motiu)
-            if parts:
-                text += f'  ({", ".join(parts)})'
-            self.lbl_correction.setText(text)
+            self.lbl_meta.setText(f'({", ".join(parts)})' if parts else '')
 
             status = c['status']
-            blocked = status in ('manual', 'not_found')
-            self.btn_accept.setEnabled(status != 'accepted' and not blocked)
-            self.btn_reject.setEnabled(status != 'rejected' and not blocked)
-            mem_enabled = status in ('pending', 'manual')
-            self.chk_mem.setEnabled(mem_enabled)
-            if mem_enabled:
-                self.lbl_mem_prefix.setText(f'Memoritzar "{c["original"]}" →')
-                self.edit_mem_correccio.setReadOnly(status == 'pending')
-                self.edit_mem_correccio.setStyleSheet(
-                    "font-style:italic; color:#555;" if status == 'pending'
-                    else "font-style:italic; color:#000; background:#FFF9C4;"
-                )
-                # Actualitzar el camp només si el valor ha canviat per evitar bucles
-                if self.edit_mem_correccio.text() != c['correccio']:
-                    self.edit_mem_correccio.setText(c['correccio'])
-                self.lbl_mem_prefix.setVisible(True)
-                self.edit_mem_correccio.setVisible(True)
-                # Restaurar l'estat del checkbox per aquesta correcció
-                self.chk_mem.blockSignals(True)
-                self.chk_mem.setChecked(c.get('memorize', False))
-                self.chk_mem.blockSignals(False)
-            else:
-                self.lbl_mem_prefix.setVisible(False)
-                self.edit_mem_correccio.setVisible(False)
-                self.chk_mem.blockSignals(True)
-                self.chk_mem.setChecked(False)
-                self.chk_mem.blockSignals(False)
+            # No deshabilitem els botons en `manual`/`not_found` perquè l'usuari
+            # sempre ha de poder avançar: rebutjar la proposta o validar la
+            # paraula original com a correcta. Si intenta Acceptar i no s'ha
+            # pogut substituir, el handler ja marca `not_found` informativament.
+            self.btn_accept.setEnabled(status != 'accepted')
+            self.btn_validate.setEnabled(status != 'validated')
+            self.btn_reject.setEnabled(status != 'rejected')
+
+            # Memorització: visible quan la correcció pot acabar acceptada com a
+            # alias (pending o accepted). 'validated' sempre va al Vocabulari
+            # sense scope. 'manual'/'not_found' també permeten scope perquè
+            # potser sí que es pot acceptar (lletra correcta al text).
+            scope_visible = status in ('pending', 'accepted', 'manual', 'not_found')
+            self.lbl_mem_prefix.setVisible(scope_visible)
+            self.rb_none.setVisible(scope_visible)
+            self.rb_series.setVisible(scope_visible)
+            self.rb_global.setVisible(scope_visible)
+            if scope_visible:
+                self.lbl_mem_prefix.setText(f'Memoritzar "{c["original"]}" → "{c["correccio"]}":')
+                self._scope_group.blockSignals(True)
+                scope = c.get('scope', 'none')
+                if scope == 'global':
+                    self.rb_global.setChecked(True)
+                elif scope == 'series':
+                    self.rb_series.setChecked(True)
+                else:
+                    self.rb_none.setChecked(True)
+                self._scope_group.blockSignals(False)
 
             if status == 'accepted':
                 self.lbl_status.setText("✓ Canvi acceptat")
                 self.lbl_status.setStyleSheet("color:#388E3C; font-style:italic;")
+            elif status == 'validated':
+                self.lbl_status.setText("★ Validada com a correcta")
+                self.lbl_status.setStyleSheet("color:#1976D2; font-style:italic;")
             elif status == 'rejected':
                 self.lbl_status.setText("✗ Canvi rebutjat")
                 self.lbl_status.setStyleSheet("color:#B71C1C; font-style:italic;")
@@ -338,7 +442,7 @@ class InlineCorrectionEditor(QWidget):
         # Pas 1: detectar correccions pendents que l'usuari ha editat manualment
         nav_needs_update = False
         for i, c in enumerate(self._corrections):
-            if c['status'] == 'pending' and doc.find(c['original'], 0, self._FIND_FLAGS).isNull():
+            if c['status'] == 'pending' and self._find_in_doc(doc, c['original'], 0).isNull():
                 c['status'] = 'manual'
                 if i == self._current:
                     nav_needs_update = True
@@ -362,6 +466,10 @@ class InlineCorrectionEditor(QWidget):
             elif status == 'accepted':
                 search_text = c['correccio']
                 color = self._COL_CURRENT if is_current else self._COL_ACCEPTED
+            elif status == 'validated':
+                # Highlight blau suau sobre la paraula original validada
+                search_text = c['original']
+                color = self._COL_CURRENT if is_current else QColor('#BBDEFB')
             elif status == 'rejected':
                 search_text = c['original']
                 color = self._COL_CURRENT if is_current else self._COL_REJECTED
@@ -379,13 +487,13 @@ class InlineCorrectionEditor(QWidget):
             if is_current:
                 fmt.setFontWeight(700)
 
-            cursor = doc.find(search_text, 0, self._FIND_FLAGS)
+            cursor = self._find_in_doc(doc, search_text, 0)
             while not cursor.isNull():
                 sel = QTextEdit.ExtraSelection()
                 sel.format = fmt
                 sel.cursor = cursor
                 selections.append(sel)
-                cursor = doc.find(search_text, cursor, self._FIND_FLAGS)
+                cursor = self._find_in_doc(doc, search_text, cursor)
 
         self.editor.setExtraSelections(selections)
 
@@ -396,12 +504,12 @@ class InlineCorrectionEditor(QWidget):
 
         if c['status'] in ('accepted', 'manual'):
             search_text = c['correccio']
-        elif c['status'] in ('pending', 'rejected'):
+        elif c['status'] in ('pending', 'rejected', 'validated'):
             search_text = c['original']
         else:
             return  # not_found: no podem fer scroll
 
-        found = self.editor.document().find(search_text, 0, self._FIND_FLAGS)
+        found = self._find_in_doc(self.editor.document(), search_text, 0)
         if found.isNull():
             return
         # Cursor sense selecció per no sobreposar al highlight
@@ -415,19 +523,30 @@ class InlineCorrectionEditor(QWidget):
     def get_final_text(self) -> str:
         return self.editor.toPlainText()
 
-    def get_memorize_list(self) -> list[dict]:
-        # Afegir correccions manuals pendents de desar que tenen memorize=True
-        result = list(self._memorized)
-        for c in self._corrections:
-            if c['status'] == 'manual' and c.get('memorize', False):
-                if not any(m['original'] == c['original'] for m in result):
-                    result.append({'original': c['original'], 'correccio': c['correccio']})
-        return result
+    def get_memorize_global(self) -> list[dict]:
+        """Correccions a memoritzar al Vocabulari.md (alias global)."""
+        return [
+            {'original': c['original'], 'correccio': c['correccio']}
+            for c in self._corrections
+            if c['status'] == 'accepted' and c.get('scope') == 'global'
+        ]
+
+    def get_memorize_series(self) -> list[dict]:
+        """Correccions a memoritzar al semantic_memory.json local d'aquesta sèrie."""
+        return [
+            {'original': c['original'], 'correccio': c['correccio']}
+            for c in self._corrections
+            if c['status'] == 'accepted' and c.get('scope') == 'series'
+        ]
 
     def get_accepted_words(self) -> list[str]:
-        """Retorna les paraules corregides de correccions acceptades (no memoritzades)."""
-        words = []
-        for c in self._corrections:
-            if c['status'] == 'accepted':
-                words.append(c['correccio'])
-        return words
+        """Retorna les paraules corregides de correccions acceptades."""
+        return [c['correccio'] for c in self._corrections if c['status'] == 'accepted']
+
+    def get_correct_words(self) -> list[str]:
+        """Paraules originals marcades com a correctes (validades).
+
+        Es desaran al Vocabulari.md com a termes principals (no com a aliases)
+        perquè el sistema deixi de proposar-les com a errònies.
+        """
+        return [c['original'] for c in self._corrections if c['status'] == 'validated']
