@@ -102,7 +102,19 @@ Totes les operacions de lectura/escriptura al vault. Mètodes principals:
 **`transcript_corrector.py` — `TranscriptCorrector`**
 Constructor: `(vocab, semantic_memory_path=None, model=None, threshold_auto=0.85)`.
 - Carrega correccions memoritzades globals (`zConfig/Canvis-Memoritzats.md`) i locals (`semantic_memory.json` → `aliases`).
-- `detect(transcript, reference_transcript=None, semantic_context=None)` retorna `(transcript_amb_memoritzades, llista_correccions_noves)`. Cada correcció: `{original, correccio, motiu, frase, confiança}`.
+- `detect(transcript, reference_transcript=None, semantic_context=None)` retorna `(transcript_amb_memoritzades, llista_correccions_noves)`. Cada correcció: `{original, correccio, motiu, frase, confiança}`. Pipeline intern:
+  1. Aplica memoritzades (globals i locals) amb reemplaçament whole-word.
+  2. Pre-pass fuzzy: `find_fuzzy_candidates` detecta candidates per similitud amb el vocabulari (Levenshtein normalitzat, llindar 0.6).
+  3. Crida el LLM amb vocab + memòria semàntica + referència + hints del fuzzy.
+  4. Filtre post-LLM: `is_likely_phonetic` descarta substitucions semàntiques (distància > 0.75).
+  5. Merge: les candidates fuzzy que el LLM no ha recollit s'afegeixen al final.
+- `apply(transcript, corrections)` i les memoritzades comparteixen `_replace_whole_word()` per reemplaçament coherent (regex amb límits de paraula).
+
+**`phonetic_filter.py`**
+Funcions pures de similitud per al pipeline de correcció:
+- `levenshtein(a, b)`, `normalized_distance(a, b)`, `similarity(a, b)` — case/accent-insensitive.
+- `is_likely_phonetic(original, correccio, max_distance=0.75)` — filtre post-LLM contra sinònims.
+- `find_fuzzy_candidates(transcript, vocab_terms, min_similarity=0.6)` — pre-pass que detecta possibles errors lleus (1-2 chars de diferència). Errors severs (queimei↔KAIMAI) queden per al LLM.
 
 **`semantic_memory_builder.py` — `SemanticMemoryBuilder`**
 Construeix i manté `semantic_memory.json` per sèrie de reunions.

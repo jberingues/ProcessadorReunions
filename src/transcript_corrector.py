@@ -5,6 +5,8 @@ from pathlib import Path
 from crewai import Agent, Task, Crew, LLM
 from json_repair import repair_json
 
+from phonetic_filter import find_fuzzy_candidates, is_likely_phonetic
+
 
 class TranscriptCorrector:
     def __init__(self, vocab: dict, semantic_memory_path: Path = None, model: str = None,
@@ -23,20 +25,18 @@ class TranscriptCorrector:
         """
         # 1. Aplicar correccions memoritzades automàticament
         # Globals (Canvis-Memoritzats.md) → s'apliquen a totes les transcripcions
-        global_memorized = self._load_global_memorized()
-        if global_memorized:
-            for original, correccio in global_memorized.items():
-                if original in transcript:
-                    transcript = transcript.replace(original, correccio)
+        for original, correccio in self._load_global_memorized().items():
+            transcript = self._replace_whole_word(transcript, original, correccio)
 
         # Locals (semantic_memory.json) → s'apliquen només a aquesta sèrie
-        local_memorized = self._load_local_memorized()
-        if local_memorized:
-            for original, correccio in local_memorized.items():
-                if original in transcript:
-                    transcript = transcript.replace(original, correccio)
+        for original, correccio in self._load_local_memorized().items():
+            transcript = self._replace_whole_word(transcript, original, correccio)
 
-        # 2. LLM detecta nous errors
+        # 2. Pre-pass fuzzy: candidats deterministes per similitud amb el vocabulari
+        # Es passen al LLM com a hints i també es fusionen amb les seves correccions.
+        fuzzy_candidates = find_fuzzy_candidates(transcript, self._flat_vocab_terms())
+
+        # 3. LLM detecta nous errors (amb hints del pre-pass)
         vocab_text = self._format_vocab()
 
         semantic_section = ''
@@ -53,6 +53,18 @@ Temes recurrents: {', '.join(semantic_context.topic_context) or 'cap'}{terms_lin
             ref_section = f"""
 EXEMPLE DE TRANSCRIPCIÓ JA CORREGIDA (reunió anterior de la mateixa sèrie, usa-la com a referència de noms, termes i estil):
 {reference_transcript}
+"""
+
+        hints_section = ''
+        if fuzzy_candidates:
+            hints_lines = [
+                f'- "{c["original"]}" podria ser "{c["correccio"]}" (similitud {c["confiança"]:.2f})'
+                for c in fuzzy_candidates
+            ]
+            hints_section = f"""
+CANDIDATES DETECTADES AUTOMÀTICAMENT (similitud fonètica amb el vocabulari).
+Valida-les pel context i, si són correctes, inclou-les a la resposta amb la teva pròpia confiança:
+{chr(10).join(hints_lines)}
 """
 
         agent = Agent(
@@ -74,7 +86,7 @@ TASCA: Revisa la transcripció i detecta TOTES les paraules o frases que probabl
 VOCABULARI DE L'EMPRESA:
 {vocab_text}
 {semantic_section}
-{ref_section}TRANSCRIPCIÓ:
+{ref_section}{hints_section}TRANSCRIPCIÓ:
 {transcript}
 
 Per cada possible error, indica:
@@ -129,8 +141,21 @@ Si no hi ha errors, retorna [].
 
         corrections = [
             c for c in corrections
-            if isinstance(c, dict) and 'original' in c and is_whole_word(c['original'], transcript)
+            if isinstance(c, dict) and 'original' in c
+            and 'correccio' in c
+            and is_whole_word(c['original'], transcript)
         ]
+
+        # Filtre fonètic: descarta correccions massa diferents (probablement
+        # substitucions semàntiques que el LLM ha proposat per compte propi).
+        corrections = [c for c in corrections if is_likely_phonetic(c['original'], c['correccio'])]
+
+        # Fusió amb candidates fuzzy: afegim les que el LLM no ha recollit.
+        # Si el LLM ja ha proposat el mateix `original`, prevaleix (té millor context).
+        llm_originals = {c['original'] for c in corrections}
+        for cand in fuzzy_candidates:
+            if cand['original'] not in llm_originals and is_whole_word(cand['original'], transcript):
+                corrections.append(cand)
 
         return transcript, corrections
 
@@ -152,12 +177,20 @@ Si no hi ha errors, retorna [].
     def apply(self, transcript: str, corrections: list[dict]) -> str:
         """Aplica les correccions aprovades a la transcripció."""
         for c in corrections:
-            transcript = re.sub(
-                r'(?<!\w)' + re.escape(c['original']) + r'(?!\w)',
-                c['correccio'],
-                transcript
-            )
+            transcript = self._replace_whole_word(transcript, c['original'], c['correccio'])
         return transcript
+
+    @staticmethod
+    def _replace_whole_word(text: str, original: str, correccio: str) -> str:
+        """Reemplaça `original` a `text` només quan és paraula sencera.
+        Evita coincidències dins de paraules més llargues (e.g. 'cabo' dins 'acabo')."""
+        if not original:
+            return text
+        return re.sub(
+            r'(?<!\w)' + re.escape(original) + r'(?!\w)',
+            correccio,
+            text
+        )
 
     def _load_global_memorized(self) -> dict:
         if not self.semantic_memory_path:
@@ -194,3 +227,12 @@ Si no hi ha errors, retorna [].
                 continue
             lines.append(f"{seccio}: {', '.join(paraules)}")
         return '\n'.join(lines)
+
+    def _flat_vocab_terms(self) -> list[str]:
+        """Llista plana de tots els termes del vocabulari (per al pre-pass fuzzy)."""
+        terms = []
+        for seccio, paraules in self.vocab.items():
+            if seccio == 'Configuració':
+                continue
+            terms.extend(paraules)
+        return terms
