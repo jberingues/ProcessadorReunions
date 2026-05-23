@@ -211,7 +211,7 @@ Llegeix el `Vocabulari.md` unificat (termes principals + aliases en sublistes in
 
 1. **Selecció** (pàg. 0) — taula de notes corregides amb 3 columnes: `Data`, `Títol`, `Tipus de processat`. La 3a columna és un `QComboBox` per fila amb 4 opcions:
    - **`Resum`** — `SummaryWorker` (litellm). Genera resum estructurat (`##### Tema` + bullets).
-   - **`Resum+ordre dia`** — `MeetingAnalyzerWorker` (CrewAI). Compara la transcripció amb els temes de `Temes oberts.md`; actualitza el fitxer; mou temes tancats al fitxer anual; reescriu `Ordre del dia propera reunió.md`.
+   - **`Resum+ordre dia`** — `MeetingAnalyzerWorker` (CrewAI). Compara la transcripció amb els temes de `Temes oberts.md`; actualitza el fitxer (bullets datats); escriu el resum de la reunió al fitxer anual; reescriu `Ordre del dia propera reunió.md`.
    - **`Resum+ordre dia (breu)`** — igual però amb `brief=True` al MeetingAnalyzer (resums de 2 línies per tema).
    - **`Sincro`** — `DailyProcessorWorker` (CrewAI). Daily scrum per persona (ahir/avui + altres temes).
 
@@ -234,7 +234,7 @@ Llegeix el `Vocabulari.md` unificat (termes principals + aliases en sublistes in
 
 ## Tests
 
-Tests unitaris a `tests/` amb `unittest` (sense pytest). Cobreixen entre altres: `plaud_client.py` (parsing del CLI + gestió d'errors), `meeting_recording_matcher.py` (scoring + assignament), `series_name_for_file`, `ObsidianWriter.append_to_year_note`, `StateFileUpdater.update` (lectura/escriptura sobre `Temes oberts.md` + retorn del bloc de tancats), `_default_option_for_path` (mapeig path → opció del selector).
+Tests unitaris a `tests/` amb `unittest` (sense pytest). Cobreixen entre altres: `plaud_client.py` (parsing del CLI + gestió d'errors), `meeting_recording_matcher.py` (scoring + assignament), `series_name_for_file`, `ObsidianWriter.append_to_year_note`, `StateFileUpdater.update` (updates a `Temes oberts.md` + retorn del bloc del resum de la reunió per al fitxer anual), `_default_option_for_path` (mapeig path → opció del selector).
 
 ```bash
 uv run python -m unittest discover -s tests
