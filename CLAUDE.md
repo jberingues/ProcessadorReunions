@@ -148,7 +148,8 @@ S'actualitza **només** quan l'usuari activa el flag "Memoritzar" en una correcc
 **`meeting_analyzer.py` — `MeetingAnalyzer` + `StateFileUpdater`**
 - `MeetingAnalyzer.analyze(topics, transcript, brief=False)` retorna `MeetingAnalysisResult` (temes tractats + nous temes) via CrewAI.
 - `parse_active_topics(temes_oberts_path)` — llegeix `Temes oberts.md` i retorna la llista de noms dels temes oberts (s'atura a "## Altres temes").
-- `StateFileUpdater.update(temes_oberts_path, result, date_label) -> str` — aplica updates al fitxer `Temes oberts.md`, extreu els temes que han quedat marcats `(Tancat)` i **retorna** el bloc markdown formatat (temes tancats + "Altres temes"). El **caller decideix on escriu** el bloc — `wizard_processar.py` el passa a `ObsidianWriter.append_to_year_note(...)` per anar al fitxer anual. Retorna `""` si no hi ha res per arxivar.
+- `StateFileUpdater.update(temes_oberts_path, result, date_label) -> str` — aplica updates inline a `Temes oberts.md` (afegeix bullets datats sota cada tema tractat) i reescriu la secció `## Altres temes` amb els temes nous d'aquesta reunió (els antics es perden — ja s'han escrit al fitxer anual al processat previ on van aparèixer). **Retorna** un bloc markdown amb el resum d'aquesta reunió: tots els temes tractats (`### {topic_name}` + `- {summary}`) seguits de `#### Altres temes` amb els temes nous. El **caller decideix on escriu** el bloc — `wizard_processar.py` el passa a `ObsidianWriter.append_to_year_note(...)` per anar al fitxer anual. Retorna `""` si no hi ha res a escriure.
+- **No es toquen els temes marcats `(Tancat)`**: queden al fitxer `Temes oberts.md` amb la marca i l'usuari els elimina manualment quan ho decideix. Decisió presa el 2026-05-23 — abans el sistema els extreia automàticament i només escrivia els tancats al fitxer anual, però resultava confús i deixava poca traça al fitxer anual.
 
 **`daily_processor.py` — `DailyProcessor`**
 Constructor: `(vocab, model=None)`. Processa transcripcions de Daily Scrum via CrewAI. `process(transcript, attendees)` retorna `DailyScrumResult` (participants amb ahir/avui + altres temes). `format_markdown(result, meeting_title, date_str)` genera el markdown.
@@ -223,7 +224,7 @@ Llegeix el `Vocabulari.md` unificat (termes principals + aliases en sublistes in
 3. **Batch processing** (pàg. 1) — taula amb 4 columnes (`Data`, `Títol`, `Tipus`, `Estat`). Processament seqüencial: `_process_next()` decideix la branca per `item.option` (no per path!), llança el worker corresponent, i al callback escriu al destí. Tots tres processats acaben cridant `obsidian.append_to_year_note(...)`:
    - **Resum**: contingut = output cru del `SummaryWorker`.
    - **Sincro**: contingut = output del `DailyProcessor` **retallant la primera línia `# title - date`** (que duplicaria la capçalera del bloc anual).
-   - **Resum+ordre dia**: contingut = bloc retornat per `StateFileUpdater.update()` (només si no és buit). A més, reescriu `Ordre del dia propera reunió.md` via `format_ordre_del_dia()`.
+   - **Resum+ordre dia**: contingut = bloc retornat per `StateFileUpdater.update()` amb el resum complet d'aquesta reunió (tots els temes tractats + altres temes nous). Si el bloc és buit (cap tema tractat ni nou) no s'escriu al fitxer anual. A més, reescriu `Ordre del dia propera reunió.md` via `format_ordre_del_dia()`. **No elimina** els temes marcats `(Tancat)` de `Temes oberts.md` — l'usuari els treu manualment.
 
 4. La nota individual es marca com a processada amb `mark_as_processed` (sufix `*`). Ordre dins el `try`: **primer** `append_to_year_note(...)`, **després** `mark_as_processed(...)`. Si la primera falla, el worker emet `error` i la nota queda sense marcar — no hi ha falsos positius (notes marcades sense contingut escrit).
 

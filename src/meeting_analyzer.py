@@ -79,11 +79,14 @@ INSTRUCCIONS:
 
 class StateFileUpdater:
     def update(self, temes_oberts_path: Path, result: MeetingAnalysisResult, date_label: str) -> str:
-        """Aplica updates al fitxer Temes oberts.md i retorna el bloc de temes tancats
-        + altres temes en format markdown perquè el caller l'escrigui a 2026 <X>.md
-        via ObsidianWriter.append_to_year_note.
+        """Aplica updates al fitxer Temes oberts.md i retorna el bloc del resum
+        d'aquesta reunió (tots els temes tractats + temes nous) en format markdown
+        perquè el caller l'escrigui al fitxer anual via append_to_year_note.
 
-        Retorna cadena buida si no hi ha res a arxivar.
+        Els temes que el LLM marqui com a "(Tancat)" queden al fitxer Temes oberts.md
+        amb la marca; l'usuari els eliminarà manualment quan ho decideixi.
+
+        Retorna cadena buida si no hi ha temes tractats ni temes nous.
         """
         if not result.updated_topics and not result.new_other_topics:
             return ""
@@ -94,81 +97,26 @@ class StateFileUpdater:
         if result.updated_topics:
             lines = self._insert_topic_updates(lines, result.updated_topics, date_label)
 
-        lines, old_altres = self._update_other_topics(lines, result.new_other_topics)
+        lines = self._update_other_topics(lines, result.new_other_topics)
 
         Path(temes_oberts_path).write_text('\n'.join(lines) + '\n', encoding='utf-8')
-        closed_topics = self._extract_and_remove_closed_topics(temes_oberts_path, date_label)
-        return self._format_closed_block(closed_topics, old_altres)
+        return self._format_meeting_block(result)
 
-    def _format_closed_block(self, closed_topics: list[tuple[str, list[str]]],
-                             altres: list[str]) -> str:
-        """Formatea els temes tancats i altres temes com a bloc markdown."""
-        if not closed_topics and not altres:
-            return ""
+    def _format_meeting_block(self, result: MeetingAnalysisResult) -> str:
+        """Construeix el bloc del resum d'aquesta reunió (temes tractats + altres
+        temes nous) per ser afegit al fitxer anual."""
         block_lines: list[str] = []
-        for header, cont in closed_topics:
-            block_lines.append(header)
-            for line in cont:
-                if line.strip() or block_lines and block_lines[-1].strip():
-                    block_lines.append(line)
-        # Treu línies en blanc al final
+        for topic in result.updated_topics:
+            block_lines.append(f"### {topic.topic_name}")
+            block_lines.append(f"- {topic.summary}")
+            block_lines.append("")
+        if result.new_other_topics:
+            block_lines.append("#### Altres temes")
+            for new_topic in result.new_other_topics:
+                block_lines.append(f"- {new_topic}")
         while block_lines and not block_lines[-1].strip():
             block_lines.pop()
-        if altres:
-            block_lines.append("#### Altres temes")
-            for line in altres:
-                if line.strip():
-                    block_lines.append(line)
         return '\n'.join(block_lines)
-
-    def _extract_and_remove_closed_topics(self, estat_path: Path, date_label: str) -> list[tuple[str, list[str]]]:
-        """Elimina del fitxer Temes oberts els temes ### que contenen 'Tancat' al títol i els retorna."""
-        content = Path(estat_path).read_text(encoding='utf-8')
-        lines = content.splitlines()
-
-        preamble = []
-        topics = []
-        tail = []
-        current_header = None
-        current_content = []
-        in_tail = False
-
-        for line in lines:
-            if in_tail:
-                tail.append(line)
-            elif re.match(r'^#{1,6} Altres temes', line):
-                if current_header is not None:
-                    topics.append((current_header, current_content))
-                    current_header = None
-                    current_content = []
-                in_tail = True
-                tail.append(line)
-            elif re.match(r'^### ', line):
-                if current_header is not None:
-                    topics.append((current_header, current_content))
-                current_header = line
-                current_content = []
-            elif current_header is None:
-                preamble.append(line)
-            else:
-                current_content.append(line)
-
-        if current_header is not None:
-            topics.append((current_header, current_content))
-
-        closed = [(h, c) for h, c in topics if 'Tancat' in h]
-        if not closed:
-            return []
-
-        open_topics = [(h, c) for h, c in topics if (h, c) not in closed]
-        new_lines = preamble[:]
-        for header, cont in open_topics:
-            new_lines.append(header)
-            new_lines.extend(cont)
-        new_lines.extend(tail)
-        Path(estat_path).write_text('\n'.join(new_lines) + '\n', encoding='utf-8')
-
-        return closed
 
     def _insert_topic_updates(self, lines: list[str], updates: list[ActiveTopicUpdate], date_label: str) -> list[str]:
         updates_by_name = {u.topic_name: u.summary for u in updates}
@@ -191,9 +139,14 @@ class StateFileUpdater:
             i += 1
         return new_lines
 
-    def _update_other_topics(self, lines: list[str], new_topics: list[str]) -> tuple[list[str], list[str]]:
+    def _update_other_topics(self, lines: list[str], new_topics: list[str]) -> list[str]:
+        """Buida la secció '## Altres temes' del fitxer i hi posa els temes nous
+        d'aquesta reunió. Els antics no es preserven — ja s'han escrit al fitxer
+        anual en el processat previ on van aparèixer.
+
+        Si la secció '## Altres temes' no existeix, els nous temes no es desen
+        (cap creació automàtica per evitar fitxers mal estructurats sense criteri editorial)."""
         new_lines = []
-        old_altres_content = []
         in_altres = False
         for line in lines:
             if re.match(r'^#{1,6} Altres temes', line):
@@ -202,16 +155,15 @@ class StateFileUpdater:
                 for topic in new_topics:
                     new_lines.append(f'- {topic}')
                 continue
+            if in_altres and re.match(r'^#{1,6} ', line):
+                in_altres = False
+                new_lines.append(line)
+                continue
             if in_altres:
-                if re.match(r'^#{1,6} ', line) and not re.match(r'^#{1,6} Altres temes', line):
-                    in_altres = False
-                    new_lines.append(line)
-                else:
-                    if line.strip():
-                        old_altres_content.append(line)
+                # Dins la secció Altres temes — descartem el contingut antic
                 continue
             new_lines.append(line)
-        return new_lines, old_altres_content
+        return new_lines
 
 
 def format_ordre_del_dia(result: MeetingAnalysisResult, all_topics: list[str], date_str: str) -> str:

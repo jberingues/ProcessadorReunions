@@ -368,11 +368,11 @@ class WizardProcessar(QDialog):
             note = item.note
 
             updater = StateFileUpdater()
-            closed_block = updater.update(item.temes_oberts_path, processing_result, note['date'])
-            if closed_block:
+            meeting_block = updater.update(item.temes_oberts_path, processing_result, note['date'])
+            if meeting_block:
                 attendees = self._format_attendees_string(note['path'])
                 self.obsidian.append_to_year_note(
-                    note['path'], note['date'], note['title'], attendees, closed_block
+                    note['path'], note['date'], note['title'], attendees, meeting_block
                 )
 
             date_obj = datetime.strptime(note['date'], '%y%m%d')
