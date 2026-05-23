@@ -2,7 +2,8 @@ from dataclasses import dataclass, field
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QStackedWidget,
     QPushButton, QTableWidget, QTableWidgetItem, QLabel,
-    QProgressBar, QMessageBox, QHeaderView, QWidget, QAbstractItemView
+    QProgressBar, QMessageBox, QHeaderView, QWidget, QAbstractItemView,
+    QCheckBox
 )
 from PySide6.QtCore import Qt
 from vocabulary_loader import VocabularyLoader
@@ -90,6 +91,33 @@ class WizardCorreccio(QDialog):
         self.table_notes.itemSelectionChanged.connect(self._on_selection_changed)
         page.addWidget(self.table_notes)
 
+        # Opció per saltar la fase de revisió manual: aplica totes les
+        # correccions detectades directament i marca les notes com a corregides.
+        self.chk_skip_review = QCheckBox(
+            "Aplicar les correccions automàticament (sense revisió manual)"
+        )
+        self.chk_skip_review.setChecked(False)
+        self.chk_skip_review.setToolTip(
+            "Si està marcat, després de detectar les correccions s'aplicaran "
+            "totes directament sense que les hagis de revisar una per una. "
+            "Recomanat només quan confies en la qualitat del detector."
+        )
+        page.addWidget(self.chk_skip_review)
+
+        # Opció per desar còpies temporals (auto + manual) per comparar el
+        # benefici real de la revisió manual respecte de l'aplicació automàtica.
+        self.chk_save_comparison = QCheckBox(
+            "Guardar còpia automàtica per comparar amb la versió manual"
+        )
+        self.chk_save_comparison.setChecked(False)
+        self.chk_save_comparison.setToolTip(
+            "Desa tres còpies de cada nota a /tmp/comparacio_correccions/: "
+            "_original.md (transcripció abans de res), _auto.md (totes les "
+            "correccions auto-aplicades) i _manual.md (la teva revisió). "
+            "Pots fer 'diff' entre les tres per veure què aporta cada pas."
+        )
+        page.addWidget(self.chk_save_comparison)
+
         self.stack.addWidget(w)
 
     def _load_notes(self):
@@ -147,6 +175,11 @@ class WizardCorreccio(QDialog):
     def _prepare_and_start_batch(self, selected_rows: list[int]):
         selected_notes = [self.notes[r] for r in selected_rows]
 
+        # Guardem l'estat del checkbox: l'usuari podria canviar-lo durant el
+        # batch i no volem comportament inconsistent entre notes.
+        self.skip_review = self.chk_skip_review.isChecked()
+        self.save_comparison = self.chk_save_comparison.isChecked()
+
         vocab_path = self.obsidian.vault / 'Reunions' / 'zConfig' / 'Vocabulari.md'
         loader = VocabularyLoader(vocab_path)
         vocab = loader.load()
@@ -171,6 +204,15 @@ class WizardCorreccio(QDialog):
                 corrector = TranscriptCorrector(vocab, semantic_memory_path=semantic_memory_path,
                                                threshold_auto=threshold_auto)
                 transcript = self.obsidian.read_transcript(note['path'])
+
+                # Còpia 'original' per comparació: la transcripció tal com era
+                # abans de qualsevol modificació (aliases memoritzats, correccions
+                # LLM, revisió manual).
+                if self.save_comparison:
+                    try:
+                        self._save_comparison_copy(note, transcript, 'original')
+                    except Exception as e:
+                        print(f"[WizardCorreccio] Error desant còpia original: {e}")
 
                 reference_transcript = None
                 processed_siblings = sorted(
@@ -240,10 +282,37 @@ class WizardCorreccio(QDialog):
                 result.error_msg = str(e)
                 self.table_batch.setItem(idx, 2, QTableWidgetItem("Error"))
                 self.table_batch.setItem(idx, 3, QTableWidgetItem(str(e)[:40]))
+        elif getattr(self, 'skip_review', False):
+            # Mode automàtic: aplica totes les correccions sense revisió.
+            # No es memoritza res (cap scope) — només es modifica el text.
+            try:
+                corrected = result.corrector.apply(transcript, corrections)
+                self.obsidian.update_transcript(result.note['path'], corrected)
+                self.obsidian.mark_as_corrected(result.note['path'])
+                result.status = 'reviewed'
+                n = len(corrections)
+                self.table_batch.setItem(
+                    idx, 2, QTableWidgetItem(f"Auto-aplicat ✓ ({n} canvis)")
+                )
+                self.table_batch.setItem(idx, 3, QTableWidgetItem(str(n)))
+            except Exception as e:
+                result.status = 'error'
+                result.error_msg = str(e)
+                self.table_batch.setItem(idx, 2, QTableWidgetItem("Error"))
+                self.table_batch.setItem(idx, 3, QTableWidgetItem(str(e)[:40]))
         else:
             result.status = 'detected'
             self.table_batch.setItem(idx, 2, QTableWidgetItem("Detectat"))
             self.table_batch.setItem(idx, 3, QTableWidgetItem(str(len(corrections))))
+
+            # Còpia per comparació: aplica totes les correccions com si fos
+            # mode auto i desa-ho a un fitxer temporal (no toca la nota real).
+            if getattr(self, 'save_comparison', False):
+                try:
+                    auto_corrected = result.corrector.apply(transcript, corrections)
+                    self._save_comparison_copy(result.note, auto_corrected, 'auto')
+                except Exception as e:
+                    print(f"[WizardCorreccio] Error desant còpia auto: {e}")
 
         done = sum(1 for r in self.batch_results.values() if r.status in ('detected', 'reviewed', 'error'))
         self.progress_batch.setValue(done)
@@ -267,7 +336,10 @@ class WizardCorreccio(QDialog):
     def _on_batch_finished(self):
         done = sum(1 for r in self.batch_results.values() if r.status in ('detected', 'reviewed', 'error'))
         errors = sum(1 for r in self.batch_results.values() if r.status == 'error')
-        self.lbl_batch_status.setText(f"Completat: {done} processades" + (f" ({errors} errors)" if errors else ""))
+        msg = f"Completat: {done} processades" + (f" ({errors} errors)" if errors else "")
+        if getattr(self, 'save_comparison', False):
+            msg += " · Còpies original/auto a /tmp/comparacio_correccions/"
+        self.lbl_batch_status.setText(msg)
         self.btn_next.setEnabled(True)
 
     def _update_review_button(self):
@@ -344,6 +416,13 @@ class WizardCorreccio(QDialog):
 
         corrected = self.inline_editor.get_final_text()
 
+        # Còpia per comparació amb la versió auto (desada a _on_note_finished)
+        if getattr(self, 'save_comparison', False):
+            try:
+                self._save_comparison_copy(result.note, corrected, 'manual')
+            except Exception as e:
+                print(f"[WizardCorreccio] Error desant còpia manual: {e}")
+
         # Memoritzacions locals (semantic_memory.json d'aquesta sèrie)
         series_list = self.inline_editor.get_memorize_series()
         if result.meeting_dir and series_list:
@@ -381,6 +460,19 @@ class WizardCorreccio(QDialog):
         loader = VocabularyLoader(vocab_path)
         for w in words:
             loader.add_term(w)
+
+    def _save_comparison_copy(self, note, text, kind):
+        """Desa una còpia temporal del transcript per comparar auto vs manual.
+
+        kind: 'auto' (totes les correccions aplicades) o 'manual' (revisió usuari).
+        Path: /tmp/comparacio_correccions/<data>_<titol>_<kind>.md
+        """
+        from pathlib import Path
+        out_dir = Path('/tmp/comparacio_correccions')
+        out_dir.mkdir(parents=True, exist_ok=True)
+        safe_title = note['title'].replace('/', '_').replace(' ', '_')
+        out_path = out_dir / f"{note['date']}_{safe_title}_{kind}.md"
+        out_path.write_text(text, encoding='utf-8')
 
     def _save_to_semantic_memory(self, meeting_dir, mem_list):
         import json

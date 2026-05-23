@@ -32,9 +32,11 @@ class TranscriptCorrector:
         for original, correccio in self._load_local_memorized().items():
             transcript = self._replace_whole_word(transcript, original, correccio)
 
-        # 2. Pre-pass fuzzy: candidats deterministes per similitud amb el vocabulari
-        # Es passen al LLM com a hints i també es fusionen amb les seves correccions.
-        fuzzy_candidates = find_fuzzy_candidates(transcript, self._flat_vocab_terms())
+        # Pre-pass fuzzy desactivat: empíricament afegia massa falsos positius
+        # (paraules catalanes comunes amb similitud >0.7 amb cognoms/termes,
+        # tipus `cosa→Coma`, `pots→Cots`, `Vila→Villa`). El LLM ja veu el
+        # vocabulari sencer; no cal duplicar amb una passada independent.
+        fuzzy_candidates = []
 
         # 3. LLM detecta nous errors (amb hints del pre-pass)
         vocab_text = self._format_vocab()
@@ -89,9 +91,31 @@ Per cada possible error, indica:
     * 0.5–0.69: possible error però ambigu; el mot té sentit per si sol en català/castellà
     * < 0.5: especulatiu; no usar
 
+IMPORTANT: No proposis cap correcció si l'original ja és una entrada del vocabulari. Per exemple, si veus "Riera" al text i "Riera" és al vocabulari, NO proposis canviar-lo per "Griera" encara que també hi sigui. Cada paraula del text que ja coincideix exactament amb un terme del vocabulari és correcta i no s'ha de tocar.
 IMPORTANT: No proposis cap correcció si el terme correcte del vocabulari ja apareix literalment a la transcripció. Per exemple, si "OTC" ja és al text, no cal proposar canviar "TC" per "OTC".
 IMPORTANT: L'"original" ha de ser sempre una paraula o frase sencera, mai una part d'una paraula. Per exemple, si veus "acabo", no proposis corregir "cabo" perquè és una subcadena d'una paraula més llarga.
-IMPORTANT: Sigues CONSERVADOR. Si l'"original" és una paraula vàlida en català o castellà i té sentit pel context de la frase, NO la proposis com a error. Prefereix passar per alt un error potencial abans que generar una proposta falsa. Només proposa quan tinguis evidència clara que la paraula no encaixa al context tècnic de la reunió.
+
+REGLA CRÍTICA: NO proposis substituir una paraula catalana o castellana legítima per un terme del vocabulari només perquè sonen similar. Si l'original és una paraula que existeix al diccionari català/castellà i té sentit a la frase, NO la canviïs encara que un terme del vocabulari hi sigui fonèticament proper.
+
+EXEMPLES DEL QUE NO HAS DE PROPOSAR (errors típics a evitar):
+- "És molt a la meva zona" → NO proposis "meva → Medva". 'meva' és pronom possessiu català.
+- "Deu haver passat alguna cosa" → NO proposis "cosa → Coma". 'cosa' és substantiu català.
+- "abans he parlat amb ell" → NO proposis "parlat → Panelat". 'parlat' és participi de parlar.
+- "Al final del sistema" → NO proposis "final → Fina". 'final' és substantiu/adjectiu català.
+- "m'he equivocat en la vida" → NO proposis "vida → Vila". 'vida' és substantiu català.
+- "no seria a través de comunicacions" → NO proposis "seria → Serra". 'seria' és condicional de ser.
+- "ho miraré igualment" → NO proposis "miraré → Mifare". 'miraré' és futur de mirar.
+- "a millor podem accedir" → NO proposis "millor → Miller". 'millor' és adjectiu català.
+- "tu pots accedir" → NO proposis "pots → Cots". 'pots' és present de poder.
+- "oscil·lador intern" → NO proposis "intern → Integra". 'intern' és adjectiu català.
+- "tinc sola pebre" → NO proposis "sola → Sala". 'sola' és adjectiu femení.
+
+EXEMPLES DEL QUE SÍ HAS DE PROPOSAR (errors fonètics clars):
+- "el producte queimei" → SÍ: "queimei → KAIMAI". 'queimei' no és català ni castellà.
+- "mirem l'onea" → SÍ: "onea → HONOA". 'onea' no té sentit en cap llengua.
+- "el sistema bidpfox" → SÍ: "bidpfox → BIPROX". 'bidpfox' no és una paraula real.
+
+Regla pràctica: ABANS de proposar una correcció, pregunta't "l'original és una paraula que un diccionari de català o castellà acceptaria?". Si la resposta és sí, NO la proposis.
 
 Retorna ÚNICAMENT un array JSON (sense cap text addicional):
 [{{"original": "...", "correccio": "...", "motiu": "...", "frase": "...", "confiança": 0.95}}]
@@ -136,11 +160,12 @@ Si no hi ha errors, retorna [].
             and is_whole_word(c['original'], transcript)
         ]
 
-        # Filtre de confiança: descarta propostes especulatives del LLM (<0.5).
-        # Trade-off: perdem alguns errors detectats amb dubtes, però reduïm
-        # falsos positius molestos. Empíricament, 30-40% de propostes amb
-        # confiança baixa eren paraules legítimes fora de context.
-        corrections = [c for c in corrections if c.get('confiança', 1.0) >= 0.5]
+        # Filtre de confiança: només propostes amb confiança molt alta (≥0.85).
+        # Diversos rounds amb llindar 0.5 i 0.7 han mostrat que el LLM segueix
+        # al·lucinant substitucions falses (meva→Medva, cosa→Coma, Riera→Griera)
+        # amb confiança 0.7-0.85. Trade-off: perdem errors borderline, però
+        # evitem que el text corregit tingui pitjor qualitat que l'original.
+        corrections = [c for c in corrections if c.get('confiança', 1.0) >= 0.85]
 
         # Filtre fonètic: descarta correccions massa diferents (probablement
         # substitucions semàntiques que el LLM ha proposat per compte propi).
