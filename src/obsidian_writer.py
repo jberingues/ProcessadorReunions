@@ -2,6 +2,16 @@ import re
 from pathlib import Path
 
 
+def series_name_for_file(folder_name: str) -> str:
+    """Converteix el nom d'una subcarpeta de sèrie a la versió apta per a noms de fitxer.
+
+    Aplica: '_' → ' ', '[' → '', ']' → ''. Mantenir aquesta lògica alineada amb
+    scripts/migrate_vault.py:folder_label perquè el codi nou generi els mateixos
+    noms que la migració del vault.
+    """
+    return folder_name.replace("_", " ").replace("[", "").replace("]", "")
+
+
 class ObsidianWriter:
     def __init__(self, vault_path):
         self.vault = Path(vault_path).expanduser()
@@ -19,20 +29,6 @@ class ObsidianWriter:
         content = self._gen_content(meeting, transcripcio, subtype)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding='utf-8')
-
-        if type_folder == 'Seguiment':
-            meeting_dir = path.parent.parent
-            if subtype == 'puntual':
-                notes_to_create = ['Històric']
-            else:
-                title = meeting['title']
-                estat_nom = title if title else 'Estat actual'
-                notes_to_create = [estat_nom, 'Històric']
-            for nom_nota in notes_to_create:
-                nota_path = meeting_dir / f"{nom_nota}.md"
-                if not nota_path.exists():
-                    nota_path.write_text("", encoding='utf-8')
-
         return True
 
     def _read_attendees_from_note(self, note_path: Path) -> str:
@@ -50,36 +46,6 @@ class ObsidianWriter:
             return ', '.join(names)
         except Exception:
             return ''
-
-    def append_to_provider_note(self, note_path: Path, date_str: str, meeting_title: str, summary: str, project_dir: Path = None):
-        if project_dir is None:
-            project_dir = note_path.parent.parent
-        provider_name = project_dir.name
-        provider_note = project_dir / f"{provider_name}.md"
-
-        if not provider_note.exists():
-            provider_note.write_text(f"# {provider_name}\n\n", encoding='utf-8')
-
-        attendees = self._read_attendees_from_note(note_path)
-        attendees_line = f"Assistents: {attendees}\n" if attendees else ""
-
-        content = provider_note.read_text(encoding='utf-8')
-        section_title = f"{date_str}_{meeting_title.replace(' ', '_')} (reunió)"
-        date_prefix = f"## {date_str}_"
-
-        if date_prefix in content:
-            idx = content.find(date_prefix)
-            next_section = content.find('\n## ', idx + 1)
-            if next_section == -1:
-                new_content = content.rstrip('\n') + f"\n\n{attendees_line}#### Resum reunió:\n{summary}\n"
-            else:
-                new_content = (content[:next_section].rstrip('\n') +
-                               f"\n\n{attendees_line}#### Resum reunió:\n{summary}\n\n" +
-                               content[next_section:].lstrip('\n'))
-        else:
-            new_content = content.rstrip('\n') + f"\n\n## {section_title}\n\n{attendees_line}#### Resum reunió:\n{summary}\n"
-
-        provider_note.write_text(new_content, encoding='utf-8')
 
     def append_email_to_provider_note(self, note_path: Path, date_str: str, email_title: str, summary: str, project_dir: Path = None):
         if project_dir is None:
@@ -106,6 +72,41 @@ class ObsidianWriter:
         else:
             content = historic_path.read_text(encoding='utf-8')
             historic_path.write_text(content + entry, encoding='utf-8')
+
+    def append_to_year_note(self, meeting_note_path: Path, date_label: str,
+                            title: str, attendees: str, content_block: str) -> Path:
+        """Afegeix un bloc al fitxer anual de la sèrie ('<year> <series>.md').
+
+        El path es deriva del path de la nota de reunió:
+        - subfolder = meeting_note_path.parent.parent (puja de Reunions/ al subfolder de la sèrie)
+        - year = 2000 + YY (extret dels primers 2 dígits del nom de fitxer YYMMDD_*.md)
+        - series = series_name_for_file(subfolder.name)
+
+        Format del bloc:
+
+            ## <date_label> - <title>
+            Assistents: <attendees>     ← només si attendees no és buit
+
+            <content_block>
+        """
+        year = 2000 + int(meeting_note_path.name[:2])
+        subfolder = meeting_note_path.parent.parent
+        series = series_name_for_file(subfolder.name)
+        year_note = subfolder / f"{year} {series}.md"
+
+        header_lines = [f"## {date_label} - {title}"]
+        if attendees:
+            header_lines.append(f"Assistents: {attendees}")
+        block = "\n".join(header_lines) + "\n\n" + content_block.rstrip() + "\n"
+
+        if year_note.exists():
+            existing = year_note.read_text(encoding='utf-8')
+            year_note.write_text(existing.rstrip() + "\n\n" + block, encoding='utf-8')
+        else:
+            year_note.parent.mkdir(parents=True, exist_ok=True)
+            year_note.write_text(block, encoding='utf-8')
+
+        return year_note
 
     def create_simple_note(self, meeting: dict, transcripcio: str, target_dir) -> bool:
         from pathlib import Path

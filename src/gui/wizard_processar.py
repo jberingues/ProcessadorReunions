@@ -6,7 +6,8 @@ from pathlib import Path
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QStackedWidget,
     QPushButton, QTableWidget, QTableWidgetItem, QLabel,
-    QProgressBar, QMessageBox, QHeaderView, QWidget, QAbstractItemView
+    QProgressBar, QMessageBox, QHeaderView, QWidget, QAbstractItemView,
+    QComboBox
 )
 from PySide6.QtCore import Qt
 from vocabulary_loader import VocabularyLoader
@@ -16,28 +17,44 @@ from workers import (
 )
 
 
+OPTION_RESUM = "Resum"
+OPTION_RESUM_ORDRE = "Resum+ordre dia"
+OPTION_RESUM_ORDRE_BREU = "Resum+ordre dia (breu)"
+OPTION_SINCRO = "Sincro"
+ALL_OPTIONS = [OPTION_RESUM, OPTION_RESUM_ORDRE, OPTION_RESUM_ORDRE_BREU, OPTION_SINCRO]
+
+
+def _default_option_for_path(path: Path) -> str:
+    parts = path.parts
+    if 'Sincronització' in parts:
+        return OPTION_SINCRO
+    if 'Seguiment' in parts:
+        return OPTION_RESUM_ORDRE
+    return OPTION_RESUM
+
+
 @dataclass
 class _BatchItem:
     note: dict
+    option: str = OPTION_RESUM
     status: str = 'pending'  # pending|running|saved|skipped|error
     error_msg: str | None = None
-    processing_type: str | None = None
     processing_result: object = None
     processing_markdown: str | None = None
     all_topics: list = field(default_factory=list)
-    estat_path: object = None
+    temes_oberts_path: object = None
 
 
 class WizardProcessar(QDialog):
-    def __init__(self, calendar, obsidian, parent=None, mode='normal'):
+    def __init__(self, calendar, obsidian, parent=None):
         super().__init__(parent)
         self.calendar = calendar
         self.obsidian = obsidian
-        self.mode = mode
-        self.setWindowTitle("Processar curt reunions" if mode == 'curt' else "Processar reunions")
-        self.setMinimumSize(750, 550)
+        self.setWindowTitle("Processar reunions")
+        self.setMinimumSize(800, 550)
 
         self.notes = []
+        self.row_combos: dict[int, QComboBox] = {}
         self.batch_results: dict[int, _BatchItem] = {}
         self._batch_queue: list[int] = []
         self._batch_done_count = 0
@@ -48,7 +65,6 @@ class WizardProcessar(QDialog):
         self.stack = QStackedWidget()
         layout.addWidget(self.stack)
 
-        # Botons navegació
         nav = QHBoxLayout()
         self.btn_back = QPushButton("Enrere")
         self.btn_back.clicked.connect(self._go_back)
@@ -76,8 +92,7 @@ class WizardProcessar(QDialog):
         w.setLayout(page)
 
         header = QHBoxLayout()
-        label_text = "Reunions de Seguiment corregides per processar:" if self.mode == 'curt' else "Reunions corregides per processar:"
-        header.addWidget(QLabel(label_text))
+        header.addWidget(QLabel("Reunions corregides per processar:"))
         header.addStretch()
         self.lbl_sel_count = QLabel("0 seleccionades")
         header.addWidget(self.lbl_sel_count)
@@ -87,11 +102,14 @@ class WizardProcessar(QDialog):
         page.addLayout(header)
 
         self.table_notes = QTableWidget()
-        self.table_notes.setColumnCount(2)
-        self.table_notes.setHorizontalHeaderLabels(["Data", "Títol"])
+        self.table_notes.setColumnCount(3)
+        self.table_notes.setHorizontalHeaderLabels(["Data", "Títol", "Tipus de processat"])
         self.table_notes.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table_notes.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        self.table_notes.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        header_view = self.table_notes.horizontalHeader()
+        header_view.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        header_view.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        header_view.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         self.table_notes.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table_notes.itemSelectionChanged.connect(self._on_selection_changed)
         page.addWidget(self.table_notes)
@@ -99,14 +117,18 @@ class WizardProcessar(QDialog):
         self.stack.addWidget(w)
 
     def _load_notes(self):
-        notes = self.obsidian.find_corrected_notes()
-        if self.mode == 'curt':
-            notes = [n for n in notes if 'Seguiment' in n['path'].parts]
-        self.notes = notes
+        self.notes = self.obsidian.find_corrected_notes()
+        self.row_combos.clear()
         self.table_notes.setRowCount(len(self.notes))
         for i, n in enumerate(self.notes):
             self.table_notes.setItem(i, 0, QTableWidgetItem(n['date']))
             self.table_notes.setItem(i, 1, QTableWidgetItem(n['title']))
+
+            combo = QComboBox()
+            combo.addItems(ALL_OPTIONS)
+            combo.setCurrentText(_default_option_for_path(n['path']))
+            self.row_combos[i] = combo
+            self.table_notes.setCellWidget(i, 2, combo)
 
     def _toggle_select_all(self):
         if self.table_notes.selectionModel().selectedRows():
@@ -133,8 +155,8 @@ class WizardProcessar(QDialog):
         page.addWidget(self.progress_batch)
 
         self.table_batch = QTableWidget()
-        self.table_batch.setColumnCount(3)
-        self.table_batch.setHorizontalHeaderLabels(["Data", "Títol", "Estat"])
+        self.table_batch.setColumnCount(4)
+        self.table_batch.setHorizontalHeaderLabels(["Data", "Títol", "Tipus", "Estat"])
         self.table_batch.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table_batch.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self.table_batch.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -143,10 +165,36 @@ class WizardProcessar(QDialog):
 
         self.stack.addWidget(w)
 
+    # -- Validació prèvia --
+
+    def _validate_pre_flight(self, selected_rows: list[int]) -> list[str]:
+        """Retorna llista d'errors (buida si tot OK).
+
+        Per files amb 'Resum+ordre dia' (o variant breu), comprova que existeix
+        Temes oberts.md a la subcarpeta de la sèrie. Si no, l'usuari ha d'entrar
+        els temes manualment abans de processar (decisió explícita per evitar
+        crear un fitxer buit sense criteri editorial).
+        """
+        errors = []
+        for r in selected_rows:
+            option = self.row_combos[r].currentText()
+            if option not in (OPTION_RESUM_ORDRE, OPTION_RESUM_ORDRE_BREU):
+                continue
+            note = self.notes[r]
+            temes_path = note['path'].parent.parent / 'Temes oberts.md'
+            if not temes_path.exists():
+                errors.append(
+                    f"{note['date']} - {note['title']}: "
+                    f"falta {temes_path.parent.name}/Temes oberts.md "
+                    f"(crea'l manualment amb els temes oberts inicials)"
+                )
+        return errors
+
     # -- Lògica de batch seqüencial --
 
     def _prepare_and_start_batch(self, selected_rows: list[int]):
         selected_notes = [self.notes[r] for r in selected_rows]
+        selected_options = [self.row_combos[r].currentText() for r in selected_rows]
 
         self.batch_results.clear()
         self._batch_queue.clear()
@@ -156,11 +204,12 @@ class WizardProcessar(QDialog):
         self.progress_batch.setRange(0, len(selected_notes))
         self.progress_batch.setValue(0)
 
-        for idx, note in enumerate(selected_notes):
+        for idx, (note, option) in enumerate(zip(selected_notes, selected_options)):
             self.table_batch.setItem(idx, 0, QTableWidgetItem(note['date']))
             self.table_batch.setItem(idx, 1, QTableWidgetItem(note['title']))
-            self.table_batch.setItem(idx, 2, QTableWidgetItem("Pendent"))
-            self.batch_results[idx] = _BatchItem(note=note)
+            self.table_batch.setItem(idx, 2, QTableWidgetItem(option))
+            self.table_batch.setItem(idx, 3, QTableWidgetItem("Pendent"))
+            self.batch_results[idx] = _BatchItem(note=note, option=option)
             self._batch_queue.append(idx)
 
         self.lbl_batch_status.setText(f"Processant 0/{len(selected_notes)}...")
@@ -174,32 +223,24 @@ class WizardProcessar(QDialog):
         idx = self._batch_queue.pop(0)
         item = self.batch_results[idx]
         item.status = 'running'
-        self.table_batch.setItem(idx, 2, QTableWidgetItem("Processant..."))
+        self.table_batch.setItem(idx, 3, QTableWidgetItem("Processant..."))
 
         note = item.note
         try:
             transcript = self.obsidian.read_transcript(note['path'])
-            path_parts = note['path'].parts
-
-            if 'Sincronització' in path_parts:
-                self._batch_start_sincronitzacio(idx, note, transcript)
-            elif 'Seguiment' in path_parts:
-                subtype = self._extract_subtype_from_note(note['path'])
-                if subtype == 'puntual':
-                    self._batch_start_seguiment_puntual(idx, note, transcript)
-                else:
-                    self._batch_start_seguiment(idx, note, transcript)
-            elif 'Proveïdors' in path_parts:
-                self._batch_start_proveidors(idx, note, transcript)
+            if item.option == OPTION_SINCRO:
+                self._batch_start_sincro(idx, note, transcript)
+            elif item.option in (OPTION_RESUM_ORDRE, OPTION_RESUM_ORDRE_BREU):
+                brief = (item.option == OPTION_RESUM_ORDRE_BREU)
+                self._batch_start_seguiment(idx, note, transcript, brief)
+            elif item.option == OPTION_RESUM:
+                self._batch_start_resum(idx, note, transcript)
             else:
-                self._batch_skip(idx, "Tipus no reconegut")
+                self._batch_skip(idx, f"Opció desconeguda: {item.option}")
         except Exception as e:
             self._batch_error(idx, str(e))
 
-    def _batch_start_sincronitzacio(self, idx, note, transcript):
-        item = self.batch_results[idx]
-        item.processing_type = 'sincronitzacio'
-
+    def _batch_start_sincro(self, idx, note, transcript):
         vocab_path = self.obsidian.vault / 'Reunions' / 'zConfig' / 'Vocabulari.md'
         vocab = VocabularyLoader(vocab_path).load()
 
@@ -245,29 +286,27 @@ class WizardProcessar(QDialog):
         )
         self.worker_processing.start()
 
-    def _batch_start_seguiment(self, idx, note, transcript):
+    def _batch_start_seguiment(self, idx, note, transcript, brief: bool):
         item = self.batch_results[idx]
-        item.processing_type = 'seguiment'
-
-        title = note['title']
-        estat_nom = title if title else 'Estat actual'
-        estat_path = note['path'].parent.parent / f'{estat_nom}.md'
-        if not estat_path.exists():
-            estat_path.write_text("", encoding='utf-8')
+        temes_path = note['path'].parent.parent / 'Temes oberts.md'
+        # La validació prèvia garanteix que existeix; doble-check defensiu:
+        if not temes_path.exists():
+            self._batch_skip(idx, "Falta Temes oberts.md")
+            return
 
         from meeting_analyzer import MeetingAnalyzer, parse_active_topics
-        topics = parse_active_topics(estat_path)
+        topics = parse_active_topics(temes_path)
 
         if not topics:
-            self._batch_skip(idx, "Sense temes oberts")
+            self._batch_skip(idx, "Temes oberts.md buit")
             return
 
         item.all_topics = topics
-        item.estat_path = estat_path
+        item.temes_oberts_path = temes_path
         analyzer = MeetingAnalyzer()
 
         self.worker_processing = MeetingAnalyzerWorker(
-            analyzer, topics, transcript, self, brief=(self.mode == 'curt')
+            analyzer, topics, transcript, self, brief=brief
         )
         self.worker_processing.finished.connect(
             lambda r, i=idx: self._batch_on_seguiment_finished(i, r)
@@ -277,19 +316,7 @@ class WizardProcessar(QDialog):
         )
         self.worker_processing.start()
 
-    def _batch_start_seguiment_puntual(self, idx, note, transcript):
-        self.batch_results[idx].processing_type = 'seguiment_puntual'
-        self.worker_processing = SummaryWorker(transcript, self)
-        self.worker_processing.finished.connect(
-            lambda s, i=idx: self._batch_on_summary_finished(i, s)
-        )
-        self.worker_processing.error.connect(
-            lambda msg, i=idx: self._batch_error(i, msg)
-        )
-        self.worker_processing.start()
-
-    def _batch_start_proveidors(self, idx, note, transcript):
-        self.batch_results[idx].processing_type = 'proveidors'
+    def _batch_start_resum(self, idx, note, transcript):
         self.worker_processing = SummaryWorker(transcript, self)
         self.worker_processing.finished.connect(
             lambda s, i=idx: self._batch_on_summary_finished(i, s)
@@ -307,18 +334,17 @@ class WizardProcessar(QDialog):
         item.processing_markdown = md_output
         try:
             note = item.note
-            date_obj = datetime.strptime(note['date'], '%y%m%d')
-            year = date_obj.strftime('%Y')
-            resum_path = note['path'].parent.parent / f'Resum reunions {year}.md'
-
-            if not resum_path.exists():
-                resum_path.parent.mkdir(parents=True, exist_ok=True)
-                header = f"---\ntype: resum-reunions\nyear: {year}\n---\n\n"
-                resum_path.write_text(header + md_output + '\n', encoding='utf-8')
+            attendees = self._format_attendees_string(note['path'])
+            # DailyProcessor genera '# title - date_str' a la primera línia,
+            # que duplicaria la capçalera del bloc anual. La retallem.
+            lines = md_output.splitlines()
+            if lines and lines[0].startswith('# '):
+                content = '\n'.join(lines[1:]).lstrip('\n')
             else:
-                existing = resum_path.read_text(encoding='utf-8')
-                resum_path.write_text(existing + '\n---\n\n' + md_output + '\n', encoding='utf-8')
-
+                content = md_output
+            self.obsidian.append_to_year_note(
+                note['path'], note['date'], note['title'], attendees, content
+            )
             self.obsidian.mark_as_processed(note['path'])
             self._batch_mark_done(idx)
         except Exception as e:
@@ -334,7 +360,12 @@ class WizardProcessar(QDialog):
             note = item.note
 
             updater = StateFileUpdater()
-            updater.update(item.estat_path, processing_result, note['date'])
+            closed_block = updater.update(item.temes_oberts_path, processing_result, note['date'])
+            if closed_block:
+                attendees = self._format_attendees_string(note['path'])
+                self.obsidian.append_to_year_note(
+                    note['path'], note['date'], note['title'], attendees, closed_block
+                )
 
             date_obj = datetime.strptime(note['date'], '%y%m%d')
             ordre_path = note['path'].parent.parent / 'Ordre del dia propera reunió.md'
@@ -353,13 +384,10 @@ class WizardProcessar(QDialog):
         item.processing_markdown = summary
         try:
             note = item.note
-            if item.processing_type == 'seguiment_puntual':
-                title = f"{note['date']} - {note['title']}"
-                self.obsidian.append_to_historic(note['path'], title, summary)
-            elif item.processing_type == 'proveidors':
-                self.obsidian.append_to_provider_note(
-                    note['path'], note['date'], note['title'], summary
-                )
+            attendees = self._format_attendees_string(note['path'])
+            self.obsidian.append_to_year_note(
+                note['path'], note['date'], note['title'], attendees, summary
+            )
             self.obsidian.mark_as_processed(note['path'])
             self._batch_mark_done(idx)
         except Exception as e:
@@ -371,7 +399,7 @@ class WizardProcessar(QDialog):
 
     def _batch_mark_done(self, idx):
         self.batch_results[idx].status = 'saved'
-        self.table_batch.setItem(idx, 2, QTableWidgetItem("Desat ✓"))
+        self.table_batch.setItem(idx, 3, QTableWidgetItem("Desat ✓"))
         self._batch_done_count += 1
         self.progress_batch.setValue(self._batch_done_count)
         total = len(self.batch_results)
@@ -379,7 +407,7 @@ class WizardProcessar(QDialog):
 
     def _batch_skip(self, idx, reason):
         self.batch_results[idx].status = 'skipped'
-        self.table_batch.setItem(idx, 2, QTableWidgetItem(f"Omesa: {reason}"))
+        self.table_batch.setItem(idx, 3, QTableWidgetItem(f"Omesa: {reason}"))
         self._batch_done_count += 1
         self.progress_batch.setValue(self._batch_done_count)
         self._process_next()
@@ -387,7 +415,7 @@ class WizardProcessar(QDialog):
     def _batch_error(self, idx, msg):
         self.batch_results[idx].status = 'error'
         self.batch_results[idx].error_msg = msg
-        self.table_batch.setItem(idx, 2, QTableWidgetItem("Error"))
+        self.table_batch.setItem(idx, 3, QTableWidgetItem("Error"))
         self._batch_done_count += 1
         self.progress_batch.setValue(self._batch_done_count)
         self._process_next()
@@ -434,6 +462,16 @@ class WizardProcessar(QDialog):
             if not rows:
                 return
             selected_rows = sorted(r.row() for r in rows)
+            errors = self._validate_pre_flight(selected_rows)
+            if errors:
+                QMessageBox.warning(
+                    self,
+                    "Falten fitxers de temes oberts",
+                    "No es pot continuar perquè falten els fitxers següents:\n\n"
+                    + "\n".join(f"• {e}" for e in errors)
+                    + "\n\nCrea els 'Temes oberts.md' manualment o canvia el tipus de processat."
+                )
+                return
             self.stack.setCurrentIndex(1)
             self._update_nav()
             self._prepare_and_start_batch(selected_rows)
@@ -455,16 +493,6 @@ class WizardProcessar(QDialog):
             self.btn_next.setEnabled(not batch_running and not self._batch_queue)
 
     # -- Utilitats d'extracció de notes --
-
-    def _extract_subtype_from_note(self, path) -> str:
-        content = path.read_text(encoding='utf-8')
-        if content.startswith('---'):
-            end = content.find('---', 3)
-            if end != -1:
-                frontmatter = yaml.safe_load(content[3:end])
-                if frontmatter:
-                    return frontmatter.get('subtype', '') or ''
-        return ''
 
     def _extract_speaker_emails_from_note(self, path) -> dict:
         content = path.read_text(encoding='utf-8')
@@ -491,3 +519,7 @@ class WizardProcessar(QDialog):
                         attendees.append({'name': name})
                     return attendees
         return []
+
+    def _format_attendees_string(self, note_path) -> str:
+        atts = self._extract_attendees_from_note(note_path)
+        return ', '.join(a['name'] for a in atts)

@@ -15,9 +15,9 @@ class MeetingAnalysisResult(BaseModel):
     new_other_topics: list[str]
 
 
-def parse_active_topics(estat_path: Path) -> list[str]:
-    """Llegeix Estat actual.md i retorna els noms de les seccions ### (exclou ## Altres temes)."""
-    content = Path(estat_path).read_text(encoding='utf-8')
+def parse_active_topics(temes_oberts_path: Path) -> list[str]:
+    """Llegeix Temes oberts.md i retorna els noms de les seccions ### (exclou ## Altres temes)."""
+    content = Path(temes_oberts_path).read_text(encoding='utf-8')
     topics = []
     for line in content.splitlines():
         if re.match(r'^#{1,6} Altres temes', line):
@@ -78,11 +78,17 @@ INSTRUCCIONS:
 
 
 class StateFileUpdater:
-    def update(self, estat_path: Path, result: MeetingAnalysisResult, date_label: str):
-        if not result.updated_topics and not result.new_other_topics:
-            return
+    def update(self, temes_oberts_path: Path, result: MeetingAnalysisResult, date_label: str) -> str:
+        """Aplica updates al fitxer Temes oberts.md i retorna el bloc de temes tancats
+        + altres temes en format markdown perquè el caller l'escrigui a 2026 <X>.md
+        via ObsidianWriter.append_to_year_note.
 
-        content = Path(estat_path).read_text(encoding='utf-8')
+        Retorna cadena buida si no hi ha res a arxivar.
+        """
+        if not result.updated_topics and not result.new_other_topics:
+            return ""
+
+        content = Path(temes_oberts_path).read_text(encoding='utf-8')
         lines = content.splitlines()
 
         if result.updated_topics:
@@ -90,12 +96,33 @@ class StateFileUpdater:
 
         lines, old_altres = self._update_other_topics(lines, result.new_other_topics)
 
-        Path(estat_path).write_text('\n'.join(lines) + '\n', encoding='utf-8')
-        closed_topics = self._extract_and_remove_closed_topics(estat_path, date_label)
-        self._write_to_historic(estat_path.parent / 'Històric.md', date_label, closed_topics, old_altres)
+        Path(temes_oberts_path).write_text('\n'.join(lines) + '\n', encoding='utf-8')
+        closed_topics = self._extract_and_remove_closed_topics(temes_oberts_path, date_label)
+        return self._format_closed_block(closed_topics, old_altres)
+
+    def _format_closed_block(self, closed_topics: list[tuple[str, list[str]]],
+                             altres: list[str]) -> str:
+        """Formatea els temes tancats i altres temes com a bloc markdown."""
+        if not closed_topics and not altres:
+            return ""
+        block_lines: list[str] = []
+        for header, cont in closed_topics:
+            block_lines.append(header)
+            for line in cont:
+                if line.strip() or block_lines and block_lines[-1].strip():
+                    block_lines.append(line)
+        # Treu línies en blanc al final
+        while block_lines and not block_lines[-1].strip():
+            block_lines.pop()
+        if altres:
+            block_lines.append("#### Altres temes")
+            for line in altres:
+                if line.strip():
+                    block_lines.append(line)
+        return '\n'.join(block_lines)
 
     def _extract_and_remove_closed_topics(self, estat_path: Path, date_label: str) -> list[tuple[str, list[str]]]:
-        """Elimina de Estat actual.md els temes ### que contenen 'Tancat' al títol i els retorna."""
+        """Elimina del fitxer Temes oberts els temes ### que contenen 'Tancat' al títol i els retorna."""
         content = Path(estat_path).read_text(encoding='utf-8')
         lines = content.splitlines()
 
@@ -142,23 +169,6 @@ class StateFileUpdater:
         Path(estat_path).write_text('\n'.join(new_lines) + '\n', encoding='utf-8')
 
         return closed
-
-    def _write_to_historic(self, historic_path: Path, date_label: str,
-                           closed_topics: list[tuple[str, list[str]]], altres: list[str]):
-        """Escriu temes tancats i altres temes en un únic bloc datat a Històric.md."""
-        if not closed_topics and not altres:
-            return
-
-        existing = historic_path.read_text(encoding='utf-8') if historic_path.exists() else ''
-        block = f'\n## {date_label}\n'
-        for header, cont in closed_topics:
-            block += header + '\n'
-            if cont:
-                block += '\n'.join(cont) + '\n'
-        if altres:
-            block += '#### Altres temes\n'
-            block += '\n'.join(altres) + '\n'
-        historic_path.write_text(existing + block, encoding='utf-8')
 
     def _insert_topic_updates(self, lines: list[str], updates: list[ActiveTopicUpdate], date_label: str) -> list[str]:
         updates_by_name = {u.topic_name: u.summary for u in updates}

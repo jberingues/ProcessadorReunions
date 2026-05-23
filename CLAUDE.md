@@ -36,23 +36,27 @@ uv run python -m unittest discover -s tests
 
 ## Vault Structure (Obsidian)
 
+Estructura **homogènia**: totes les subcarpetes de sèrie tenen exactament el mateix patró (vegeu `scripts/migrate_vault.py` per a la migració que la va aplicar el 2026-05). El nivell `<Tipus>/` es conserva com a contenidor organitzatiu, però **el codi de processat no el mira** — la branca de processat es decideix per l'opció del selector al wizard (vegeu "Wizard Processar — Flux Detallat").
+
 ```
 Reunions/
-  <Tipus>/           # e.g. Seguiment, Projectes, Puntual…
-    <Subfolder>/
-      Reunions/      # meeting notes live here
-        YYMMDD_Títol.md
-      Estat actual.md
-      Històric.md
-      semantic_memory.json   # memòria semàntica per sèrie de reunions
-  Projectes/
-    <NomProjecte>/
-      <NomProjecte>.md   # project template note
+  <Tipus>/                                # Seguiment / Sincronització / Proveïdors / Projectes / Reunions vàries
+    <Subfolder>/                          # sèrie de reunions
       Reunions/
-      Documentació/
+        YYMMDD_Títol.md                   # notes individuals (frontmatter sense `type:`)
+      Temes oberts.md                     # només si la sèrie té reunions de "Resum+ordre dia"
+      Ordre del dia propera reunió.md     # idem
+      <Any> <Subfolder>.md                # resum anual: històric (Seguiment), daily (Sincro), resums (puntuals)
+      Resum projecte <Subfolder>.md       # només a Projectes/<X>/
+      Correus/  Fitxers/                  # opcionals
+      semantic_memory.json                # memòria semàntica per sèrie
   zConfig/
-    Vocabulari.md          # vocabulari unificat: termes + aliases en sublistes + secció "## Configuració"
+    Vocabulari.md                         # vocabulari unificat: termes + aliases en sublistes + secció "## Configuració"
 ```
+
+**Nom dels fitxers `<Any> <Subfolder>.md`**: el `<Subfolder>` s'obté de `series_name_for_file()` (vegeu `obsidian_writer.py`) — substitueix `_` per espais i treu claudàtors. E.g. `Reunions/Seguiment/Seguiment_Arnau_Prunell/2026 Seguiment Arnau Prunell.md`. Si una reunió és de 2025, el fitxer destí és `2025 <Subfolder>.md` (l'any ve del prefix YYMMDD de la nota, no de la data actual).
+
+Subfolders amb prefix `x` (e.g. `xProjecte/`, `xProveïdor/`) són **plantilles** — el codi (i la migració) els salta.
 
 ## GUI Wizard Flows (`src/gui/`)
 
@@ -62,9 +66,8 @@ Reunions/
 | Entrar correus | `wizard_correus.py` | Importa fils de Gmail i els desa com a notes de correu al vault. |
 | Entrar fitxers | `wizard_fitxers.py` | Copia fitxers externs a una carpeta del vault. |
 | Correcció transcripcions | `wizard_correccio.py` | Batch: detecta errors de transcripció en notes sense corregir via LLM + vocabulari i mostra l'editor inline. |
-| Processar reunions | `wizard_processar.py` (mode=`normal`) | Selecciona nota corregida, l'analitza amb LLM (DailyProcessor o MeetingAnalyzer), actualitza Estat actual i Històric. |
-| Processar correus | `wizard_processar_correus.py` | Igual que processar reunions però per a notes de correu. |
-| Processar curt reunions | `wizard_processar.py` (mode=`curt`) | Versió breu (resum de 2 línies per tema). |
+| Processar reunions | `wizard_processar.py` | Selector per fila amb 4 opcions (`Resum`, `Resum+ordre dia`, `Resum+ordre dia (breu)`, `Sincro`); default segons path actual. Tots tres processats escriuen a `<Subfolder>/<Any> <Subfolder>.md`. Vegeu "Wizard Processar — Flux Detallat". |
+| Processar correus | `wizard_processar_correus.py` | Igual que la versió anterior de "Processar reunions" — encara fa servir el model antic (`Estat actual.md`, `Històric.md`, `<NomProveïdor>.md`). **Pendent d'adaptar** al model homogeni. |
 | Crear un projecte nou | `wizard_nou_projecte.py` | Selecciona nota corregida + fitxers del vault + carpeta de projecte existent, omple `Data inici` i `## Resum` de la nota de projecte via LLM. Marca la reunió com a processada. |
 
 ## Architecture — Key Modules (`src/`)
@@ -87,16 +90,18 @@ Embolcall del CLI `plaud` (instal·lat globalment via npm). Mètodes:
 **`meeting_recording_matcher.py`**
 Funció pura `match(events, recordings)` → `MatchResult(pairs, unmatched_events, unmatched_recordings)`. Score combinat per parell: `0.85·temps + 0.15·durada`. Score temporal per trams (0-5 min = 1.0, 5-30 min lineal a 0.5, 30-60 min lineal a 0, >60 min = 0; offset 0 short-circuiteja a 0 ignorant la durada). Llindar AUTO ≥ 0.9, SUGGESTED ≥ 0.3. Assignació greedy 1:1. `PairStatus` = `AUTO` / `SUGGESTED` / `MANUAL` (l'últim només el produeix la UI, no el matcher).
 
-**`obsidian_writer.py` — `ObsidianWriter`**
-Totes les operacions de lectura/escriptura al vault. Mètodes principals:
-- `create_meeting_note` / `create_email_note` / `create_simple_note` — crea notes
-- `find_corrected_notes` / `find_unprocessed_notes` / `find_uncorrected_notes` / `find_unprocessed_email_notes` — cerca notes per estat
-- `read_transcript` / `update_transcript` — llegeix/actualitza la secció `## Transcripció`
-- `read_email_body` — extreu cos d'una nota de correu
-- `mark_as_corrected` / `mark_as_processed` — canvia el sufix del fitxer (`~` / `*`)
-- `append_to_provider_note` / `append_to_historic` — afegeix contingut a notes existents
-- `find_subfolders(type_folder)` — llista subcarpetes de `Reunions/<type_folder>/`
-- `update_project_fields(note_path, data_inici, resum)` — omple `Data inici` i `## Resum` a una nota de projecte
+**`obsidian_writer.py` — `ObsidianWriter` + helper de mòdul**
+Totes les operacions de lectura/escriptura al vault.
+- **Helper de mòdul** `series_name_for_file(folder_name) -> str` — converteix el nom d'una subcarpeta a la forma apta per a fitxer (`_` → ` `, treu `[`/`]`). Mantenir alineat amb `scripts/migrate_vault.py:folder_label`.
+- `create_meeting_note` / `create_email_note` / `create_simple_note` — crea notes. **Ja no pre-crea `Estat actual.md` / `Històric.md` automàticament** — l'usuari crea `Temes oberts.md` manualment quan la sèrie ha de fer "Resum+ordre dia".
+- `find_corrected_notes` / `find_unprocessed_notes` / `find_uncorrected_notes` / `find_unprocessed_email_notes` — cerca notes per estat.
+- `read_transcript` / `update_transcript` — llegeix/actualitza la secció `## Transcripció`.
+- `read_email_body` — extreu cos d'una nota de correu.
+- `mark_as_corrected` / `mark_as_processed` — canvia el sufix del fitxer (`~` / `*`).
+- `append_to_year_note(meeting_note_path, date_label, title, attendees, content_block) -> Path` — destí unificat de tots els processats de reunió. Escriu a `<subfolder>/<year> <series>.md` amb capçalera `## <date_label> - <title>` + opcional `Assistents: …` + `content_block`. Crea el fitxer si no existeix. Any extret del prefix YYMMDD del nom de la nota; sèrie = `series_name_for_file(subfolder.name)`.
+- `append_to_historic` / `append_email_to_provider_note` — **deprecated**, encara els usa `wizard_processar_correus.py` (pendent d'adaptar). No usar per a codi nou.
+- `find_subfolders(type_folder)` — llista subcarpetes de `Reunions/<type_folder>/`.
+- `update_project_fields(note_path, data_inici, resum)` — omple `Data inici` i `## Resum` a una nota de projecte.
 
 **`transcript_corrector.py` — `TranscriptCorrector`**
 Constructor: `(vocab, semantic_memory_path=None, model=None, threshold_auto=0.85)`.
@@ -139,7 +144,9 @@ Models Pydantic: `SemanticMemory` (person, projects, technical_terms, aliases, r
 S'actualitza **només** quan l'usuari activa el flag "Memoritzar" en una correcció: s'afegeix l'alias `original → correccio` i la paraula correcta a `technical_terms`.
 
 **`meeting_analyzer.py` — `MeetingAnalyzer` + `StateFileUpdater`**
-`MeetingAnalyzer.analyze(topics, transcript, brief=False)` retorna `MeetingAnalysisResult` (temes tractats + nous temes) via CrewAI. `StateFileUpdater.update(estat_path, result, date_label)` actualitza `Estat actual.md` i `Històric.md`.
+- `MeetingAnalyzer.analyze(topics, transcript, brief=False)` retorna `MeetingAnalysisResult` (temes tractats + nous temes) via CrewAI.
+- `parse_active_topics(temes_oberts_path)` — llegeix `Temes oberts.md` i retorna la llista de noms dels temes oberts (s'atura a "## Altres temes").
+- `StateFileUpdater.update(temes_oberts_path, result, date_label) -> str` — aplica updates al fitxer `Temes oberts.md`, extreu els temes que han quedat marcats `(Tancat)` i **retorna** el bloc markdown formatat (temes tancats + "Altres temes"). El **caller decideix on escriu** el bloc — `wizard_processar.py` el passa a `ObsidianWriter.append_to_year_note(...)` per anar al fitxer anual. Retorna `""` si no hi ha res per arxivar.
 
 **`daily_processor.py` — `DailyProcessor`**
 Constructor: `(vocab, model=None)`. Processa transcripcions de Daily Scrum via CrewAI. `process(transcript, attendees)` retorna `DailyScrumResult` (participants amb ahir/avui + altres temes). `format_markdown(result, meeting_title, date_str)` genera el markdown.
@@ -195,9 +202,32 @@ Llegeix el `Vocabulari.md` unificat (termes principals + aliases en sublistes in
 
 **Enrere**: només actiu a la pàg. 2 (per re-triar carpeta sense reaparellar). No es pot tornar a la pàgina 0 un cop ha començat la iteració.
 
+## Wizard Processar — Flux Detallat
+
+**2 pàgines** (`QStackedWidget`):
+
+1. **Selecció** (pàg. 0) — taula de notes corregides amb 3 columnes: `Data`, `Títol`, `Tipus de processat`. La 3a columna és un `QComboBox` per fila amb 4 opcions:
+   - **`Resum`** — `SummaryWorker` (litellm). Genera resum estructurat (`##### Tema` + bullets).
+   - **`Resum+ordre dia`** — `MeetingAnalyzerWorker` (CrewAI). Compara la transcripció amb els temes de `Temes oberts.md`; actualitza el fitxer; mou temes tancats al fitxer anual; reescriu `Ordre del dia propera reunió.md`.
+   - **`Resum+ordre dia (breu)`** — igual però amb `brief=True` al MeetingAnalyzer (resums de 2 línies per tema).
+   - **`Sincro`** — `DailyProcessorWorker` (CrewAI). Daily scrum per persona (ahir/avui + altres temes).
+
+   **Default per fila** via `_default_option_for_path(path)`: path conté `Sincronització/` → `Sincro`; path conté `Seguiment/` → `Resum+ordre dia`; resta → `Resum`. L'usuari pot canviar-ho fila per fila.
+
+2. **Pre-flight check** (al clicar Endavant) — `_validate_pre_flight(selected_rows)` comprova que per a cada fila amb `Resum+ordre dia*` existeix `<subfolder>/Temes oberts.md`. Si falta, mostra `QMessageBox` bloquejant amb la llista de notes afectades. L'usuari ha de crear el fitxer manualment (decisió explícita per evitar crear `Temes oberts.md` buit sense criteri editorial) o canviar el tipus de processat. **No es continua fins resoldre-ho.**
+
+3. **Batch processing** (pàg. 1) — taula amb 4 columnes (`Data`, `Títol`, `Tipus`, `Estat`). Processament seqüencial: `_process_next()` decideix la branca per `item.option` (no per path!), llança el worker corresponent, i al callback escriu al destí. Tots tres processats acaben cridant `obsidian.append_to_year_note(...)`:
+   - **Resum**: contingut = output cru del `SummaryWorker`.
+   - **Sincro**: contingut = output del `DailyProcessor` **retallant la primera línia `# title - date`** (que duplicaria la capçalera del bloc anual).
+   - **Resum+ordre dia**: contingut = bloc retornat per `StateFileUpdater.update()` (només si no és buit). A més, reescriu `Ordre del dia propera reunió.md` via `format_ordre_del_dia()`.
+
+4. La nota individual es marca com a processada amb `mark_as_processed` (sufix `*`).
+
+**Decoupling**: el codi de processat **no mira mai el path** de la nota — la decisió ve del selector. Això permet, per exemple, fer "Resum" d'una nota dins `Seguiment/` o "Resum+ordre dia" d'una nota dins `Proveïdors/` si l'usuari ho vol. El path només decideix el **default** del selector.
+
 ## Tests
 
-Tests unitaris a `tests/` amb `unittest` (sense pytest). Cobreixen `plaud_client.py` (parsing del CLI + gestió d'errors) i `meeting_recording_matcher.py` (scoring + assignament).
+Tests unitaris a `tests/` amb `unittest` (sense pytest). Cobreixen entre altres: `plaud_client.py` (parsing del CLI + gestió d'errors), `meeting_recording_matcher.py` (scoring + assignament), `series_name_for_file`, `ObsidianWriter.append_to_year_note`, `StateFileUpdater.update` (lectura/escriptura sobre `Temes oberts.md` + retorn del bloc de tancats), `_default_option_for_path` (mapeig path → opció del selector).
 
 ```bash
 uv run python -m unittest discover -s tests
