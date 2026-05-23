@@ -5,9 +5,7 @@ from pathlib import Path
 def series_name_for_file(folder_name: str) -> str:
     """Converteix el nom d'una subcarpeta de sèrie a la versió apta per a noms de fitxer.
 
-    Aplica: '_' → ' ', '[' → '', ']' → ''. Mantenir aquesta lògica alineada amb
-    scripts/migrate_vault.py:folder_label perquè el codi nou generi els mateixos
-    noms que la migració del vault.
+    Aplica: '_' → ' ', '[' → '', ']' → ''.
     """
     return folder_name.replace("_", " ").replace("[", "").replace("]", "")
 
