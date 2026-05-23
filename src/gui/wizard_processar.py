@@ -33,6 +33,13 @@ def _default_option_for_path(path: Path) -> str:
     return OPTION_RESUM
 
 
+def _sort_notes_by_date(notes_with_options: list[tuple[dict, str]]) -> list[tuple[dict, str]]:
+    """Ordena pairs (note, option) per note['date'] ascendent (cronològic).
+    YYMMDD lexicogràfic == cronològic perquè el format és fix.
+    """
+    return sorted(notes_with_options, key=lambda p: p[0]['date'])
+
+
 @dataclass
 class _BatchItem:
     note: dict
@@ -193,8 +200,10 @@ class WizardProcessar(QDialog):
     # -- Lògica de batch seqüencial --
 
     def _prepare_and_start_batch(self, selected_rows: list[int]):
-        selected_notes = [self.notes[r] for r in selected_rows]
-        selected_options = [self.row_combos[r].currentText() for r in selected_rows]
+        pairs = [(self.notes[r], self.row_combos[r].currentText()) for r in selected_rows]
+        pairs = _sort_notes_by_date(pairs)
+        selected_notes = [n for n, _ in pairs]
+        selected_options = [opt for _, opt in pairs]
 
         self.batch_results.clear()
         self._batch_queue.clear()
@@ -415,7 +424,13 @@ class WizardProcessar(QDialog):
     def _batch_error(self, idx, msg):
         self.batch_results[idx].status = 'error'
         self.batch_results[idx].error_msg = msg
-        self.table_batch.setItem(idx, 3, QTableWidgetItem("Error"))
+        # Cel·la: text curt truncat. Tooltip: missatge complet (al passar el cursor).
+        short = (msg or 'desconegut').splitlines()[0]
+        if len(short) > 60:
+            short = short[:57] + '...'
+        cell = QTableWidgetItem(f"Error: {short}")
+        cell.setToolTip(msg or 'desconegut')
+        self.table_batch.setItem(idx, 3, cell)
         self._batch_done_count += 1
         self.progress_batch.setValue(self._batch_done_count)
         self._process_next()

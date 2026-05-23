@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src" / "gui"))
 
 from gui.wizard_processar import (  # noqa: E402
     _default_option_for_path,
+    _sort_notes_by_date,
     OPTION_RESUM,
     OPTION_RESUM_ORDRE,
     OPTION_SINCRO,
@@ -42,6 +43,38 @@ class TestDefaultOptionForPath(unittest.TestCase):
         # encara que també tingui 'Seguiment' (no hauria de passar), Sincro guanya.
         p = Path("/v/Reunions/Sincronització/Seguiment_X/Reunions/x.md")
         self.assertEqual(_default_option_for_path(p), OPTION_SINCRO)
+
+
+class TestSortNotesByDate(unittest.TestCase):
+    def test_sorts_ascending_by_date(self):
+        pairs = [
+            ({'date': '260520', 'title': 'a'}, 'Resum'),
+            ({'date': '260408', 'title': 'b'}, 'Sincro'),
+            ({'date': '260409', 'title': 'c'}, 'Resum+ordre dia'),
+        ]
+        result = _sort_notes_by_date(pairs)
+        self.assertEqual([p[0]['date'] for p in result], ['260408', '260409', '260520'])
+
+    def test_preserves_option_association(self):
+        pairs = [
+            ({'date': '260520', 'title': 'a'}, 'OPT-A'),
+            ({'date': '260408', 'title': 'b'}, 'OPT-B'),
+        ]
+        result = _sort_notes_by_date(pairs)
+        self.assertEqual(result[0][1], 'OPT-B')  # 260408 → OPT-B
+        self.assertEqual(result[1][1], 'OPT-A')  # 260520 → OPT-A
+
+    def test_across_years(self):
+        # 25xxxx < 26xxxx lexicogràficament == cronològicament
+        pairs = [
+            ({'date': '260101', 'title': 'a'}, 'x'),
+            ({'date': '251231', 'title': 'b'}, 'x'),
+        ]
+        result = _sort_notes_by_date(pairs)
+        self.assertEqual([p[0]['date'] for p in result], ['251231', '260101'])
+
+    def test_empty_list(self):
+        self.assertEqual(_sort_notes_by_date([]), [])
 
 
 if __name__ == "__main__":
