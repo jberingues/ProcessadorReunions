@@ -9,7 +9,6 @@ from PySide6.QtWidgets import (
     QProgressBar, QMessageBox, QHeaderView, QWidget, QAbstractItemView,
     QComboBox
 )
-from PySide6.QtCore import Qt
 from vocabulary_loader import VocabularyLoader
 from workers import (
     DailyProcessorWorker,
@@ -243,7 +242,7 @@ class WizardProcessar(QDialog):
                 brief = (item.option == OPTION_RESUM_ORDRE_BREU)
                 self._batch_start_seguiment(idx, note, transcript, brief)
             elif item.option == OPTION_RESUM:
-                self._batch_start_resum(idx, note, transcript)
+                self._batch_start_resum(idx, transcript)
             else:
                 self._batch_skip(idx, f"Opció desconeguda: {item.option}")
         except Exception as e:
@@ -325,7 +324,7 @@ class WizardProcessar(QDialog):
         )
         self.worker_processing.start()
 
-    def _batch_start_resum(self, idx, note, transcript):
+    def _batch_start_resum(self, idx, transcript):
         self.worker_processing = SummaryWorker(transcript, self)
         self.worker_processing.finished.connect(
             lambda s, i=idx: self._batch_on_summary_finished(i, s)
