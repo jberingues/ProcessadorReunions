@@ -21,7 +21,7 @@ uv run python -m unittest discover -s tests
 
 ## Required Configuration
 
-- `.env` — must contain `OBSIDIAN_VAULT_PATH=/path/to/vault` and `LLM_MODELH=<litellm model id>`
+- `.env` — must contain `OBSIDIAN_VAULT_PATH=/path/to/vault` and `LLM_MODELH=<litellm model id>`. Opcional: `EMAIL_INCLUDE_SINCRO=true` per incloure les sèries de `Sincronització/` en l'arxivat de correus (vegeu "Wizard Correus").
 - `config/google_credentials.json` — OAuth2 credentials from Google Cloud Console (Calendar + Gmail API)
 - `config/token.pickle` — auto-generated on first run after OAuth browser flow
 - **Plaud CLI**: `npm install -g @plaud-ai/cli` + un cop a la vida `plaud login` (OAuth al navegador). El binari ha d'estar al `PATH`.
@@ -65,7 +65,7 @@ Subfolders amb prefix `x` (e.g. `xProjecte/`, `xProveïdor/`) són **plantilles*
 | Botó | Wizard | Descripció |
 |------|--------|------------|
 | Entrar transcripcions | `wizard_transcripcio.py` | Pàgina 0 = `PairingView` (aparella reunions de Calendar amb gravacions de Plaud d'un dia). Itera sobre cada parell + cada gravació orfe: tria carpeta destí, descarrega transcripció de Plaud (o paste manual com a fallback), desa la nota. |
-| Entrar correus | `wizard_correus.py` | Importa fils de Gmail i els desa com a notes de correu al vault. |
+| Entrar correus | `wizard_correus.py` | Arxivat automàtic de fils Gmail al vault segons etiquetes (vegeu "Wizard Correus — Flux Detallat"). |
 | Entrar fitxers | `wizard_fitxers.py` | Copia fitxers externs a una carpeta del vault. |
 | Correcció transcripcions | `wizard_correccio.py` | Batch: detecta errors de transcripció en notes sense corregir via LLM + vocabulari i mostra l'editor inline. |
 | Processar reunions | `wizard_processar.py` | Selector per fila amb 4 opcions (`Resum`, `Resum+ordre dia`, `Resum+ordre dia (breu)`, `Sincro`); default segons path actual. Tots tres processats escriuen a `<Subfolder>/<Any> <Subfolder>.md`. Vegeu "Wizard Processar — Flux Detallat". |
@@ -78,7 +78,18 @@ Subfolders amb prefix `x` (e.g. `xProjecte/`, `xProveïdor/`) són **plantilles*
 Google Calendar OAuth (credentials a `config/`). `_parse_event(event)` retorna `{title, start, end, duration, attendees}`. El `start` és tz-aware (ISO de Google amb `Z` o offset).
 
 **`gmail_fetcher.py` — `GmailFetcher`**
-Accés a Gmail via la mateixa OAuth. `fetch_threads(date_from, date_to)` retorna fils de correu.
+Embolcall sobre l'API Gmail (OAuth compartit amb Calendar):
+- `list_user_labels()` / `create_label(name)` — gestió d'etiquetes user (idempotent).
+- `list_thread_ids_since(date_from)` — IDs de fils amb `after:` paginat.
+- `peek_thread(id, labels_index)` — crida `format=minimal` per saber `{label_names, message_count}` sense baixar bodies. Indispensable per al check d'idempotència abans d'un fetch complet.
+- `fetch_thread_full(id, labels_index)` — fil sencer amb tots els missatges (ordenats cronològicament), headers parsejats, `body_text` (text/plain → tal qual; només HTML → conversió amb `html2text` si està disponible) i adjunts descarregats en binari.
+
+**`email_archiver.py`** — Lògica pura per a l'arxivat (sense Qt ni Gmail):
+- `discover_vault_series(vault_path, include_sincro=False) -> VaultDiscovery` — escaneja `Reunions/` i retorna `active = {etiqueta → Path}` per a tots els top-level admesos (`Seguiment`, `Projectes`, `Proveïdors`, `Reunions vàries`, opcionalment `Sincronització`). També `closed_by_active_label = {'Seguiment/X' → Path}` per a sèries de `Temes seguiment tancats/` (es indexen per l'etiqueta *activa* esperada per detectar correus tardans). Salta `x*` i `zConfig`. Detecta sèries niu (e.g. `Proveïdors/ARROW/Microchip`).
+- `pick_destination(label_names, discovery) -> DispatchResult` — primary per prioritat `Projectes > Proveïdors > Seguiment > Reunions vàries`. Si la primary és tancada, `is_closed=True` + warning. Les altres etiquetes vault del fil van a `extra_labels`.
+- `normalize_subject(subject, max_len=60)` — treu Re:/Fwd:/Fw:/Rv:/Rep: repetits, sanitza chars de path, retalla, espais → `_`.
+- `place_attachment(files_dir, date_prefix, name, data)` — desa un adjunt idempotentment: si existeix amb bytes idèntics, reusa el path; si col·lisió amb contingut diferent, afegeix sufix `_2`, `_3`, …
+- `load_processed_store / save_processed_store / needs_archive / mark_archived` — JSON d'idempotència a `<vault>/zConfig/.processed_threads.json`. `needs_archive` retorna True si el fil és nou o si `message_count` ha crescut.
 
 **`plaud_client.py` — `PlaudClient`**
 Embolcall del CLI `plaud` (instal·lat globalment via npm). Mètodes:
@@ -96,6 +107,7 @@ Funció pura `match(events, recordings)` → `MatchResult(pairs, unmatched_event
 Totes les operacions de lectura/escriptura al vault.
 - **Helper de mòdul** `series_name_for_file(folder_name) -> str` — converteix el nom d'una subcarpeta a la forma apta per a fitxer (`_` → ` `, treu `[`/`]`).
 - `create_meeting_note` / `create_email_note` / `create_simple_note` — crea notes. **Ja no pre-crea `Estat actual.md` / `Històric.md` automàticament** — l'usuari crea `Temes oberts.md` manualment quan la sèrie ha de fer "Resum+ordre dia".
+- `create_email_thread_note(thread, dest_dir, primary_label, extra_labels=None) -> (note_path, attachment_paths)` — escriu una nota markdown del fil sencer a `<dest_dir>/Correus/YYMMDD_<assumpte>.md`. Frontmatter amb `type: correu`, `thread_id`, `data`, `assumpte`, `labels: [primary]`, `tags: [extras]`. Una secció `## YYYY-MM-DD HH:MM — Nom <email>` per missatge (amb `(resposta)` a partir del 2n). Els adjunts es desen a `<dest_dir>/Fitxers/` amb `email_archiver.place_attachment` (idempotent: bytes iguals → reusa) i s'enllacen amb wikilinks `[[Fitxers/...]]` sota cada missatge. Sobreescriu la nota si ja existeix.
 - `find_corrected_notes` / `find_unprocessed_notes` / `find_uncorrected_notes` / `find_unprocessed_email_notes` — cerca notes per estat.
 - `read_transcript` / `update_transcript` — llegeix/actualitza la secció `## Transcripció`.
 - `read_email_body` — extreu cos d'una nota de correu.
@@ -174,7 +186,7 @@ Llegeix el `Vocabulari.md` unificat (termes principals + aliases en sublistes in
 
 **`gui/workers.py` — QThread Workers**
 - `CalendarWorker` — carrega reunions de Google Calendar
-- `GmailWorker` — carrega fils de Gmail
+- `EmailArchiveWorker` — orquestra l'arxivat de correus (sync etiquetes + fetch fils + dispatch + escriptura). Signals: `log(str)`, `progress(done, total)`, `finished(summary: dict)`, `error(str)`. `summary` conté `archived_threads`, `skipped_unchanged`, `skipped_no_vault_label`, `sync_created_labels`, `sync_orphan_labels`, `sync_closed_warnings`, `errors`.
 - `CorrectionDetectWorker` — correcció d'una transcripció (single)
 - `BatchCorrectionDetectWorker` — correcció batch; signals: `note_started(int)`, `note_finished(int, str, list)`, `note_error(int, str)`, `all_finished()`
 - `DailyProcessorWorker` — processa daily scrum
@@ -234,7 +246,7 @@ Llegeix el `Vocabulari.md` unificat (termes principals + aliases en sublistes in
 
 ## Tests
 
-Tests unitaris a `tests/` amb `unittest` (sense pytest). Cobreixen entre altres: `plaud_client.py` (parsing del CLI + gestió d'errors), `meeting_recording_matcher.py` (scoring + assignament), `series_name_for_file`, `ObsidianWriter.append_to_year_note`, `StateFileUpdater.update` (updates a `Temes oberts.md` + retorn del bloc del resum de la reunió per al fitxer anual), `_default_option_for_path` (mapeig path → opció del selector).
+Tests unitaris a `tests/` amb `unittest` (sense pytest). Cobreixen entre altres: `plaud_client.py` (parsing del CLI + gestió d'errors), `meeting_recording_matcher.py` (scoring + assignament), `series_name_for_file`, `ObsidianWriter.append_to_year_note`, `StateFileUpdater.update` (updates a `Temes oberts.md` + retorn del bloc del resum de la reunió per al fitxer anual), `_default_option_for_path` (mapeig path → opció del selector), `email_archiver` (discover sèries vault, dispatcher amb prioritat i cas tancat, normalització d'assumpte, idempotència d'adjunts via `place_attachment`, store JSON) i `ObsidianWriter.create_email_thread_note` (frontmatter, multi-missatge amb `(resposta)`, enllaços a adjunts, regeneració sense duplicar).
 
 ```bash
 uv run python -m unittest discover -s tests
@@ -243,6 +255,73 @@ uv run python -m unittest discover -s tests
 **Regla**: cada vegada que s'afegeix funcionalitat nova, cal:
 1. Escriure un test nou per aquella funcionalitat a `tests/`.
 2. Executar tots els tests existents per verificar que no s'ha trencat res.
+
+## Wizard Correus — Flux Detallat
+
+**Objectiu**: arxivar fils de Gmail al vault segons etiquetes user. Vault = source of truth de la jerarquia. Tot està pensat per **idempotència**: pots executar-lo cada dia sense duplicacions ni pèrdues.
+
+**Convenció d'etiquetes Gmail**: planes amb `/` per a niu (que Gmail interpreta natiu). Una etiqueta per sèrie del vault:
+- `Seguiment/<Persona>`
+- `Projectes/<Projecte>`
+- `Proveïdors/<Proveïdor>` o `Proveïdors/<Categoria>/<Marca>` per a sèries niu (e.g. `Proveïdors/ARROW/Microchip`)
+- `Reunions vàries/<X>`
+- (Opcional) `Sincronització/<X>` si `EMAIL_INCLUDE_SINCRO=true` al `.env`.
+
+**Sync vault → Gmail**: a l'inici de cada execució, `EmailArchiveWorker` compara `discover_vault_series(...)` amb `list_user_labels()`. Crea les que falten. Avisa de les òrfenes per consola/log, **no esborra mai**.
+
+**Cas especial — sèrie tancada**: una sèrie traslladada a `Temes seguiment tancats/X/` no genera etiqueta nova (les etiquetes són sempre `Seguiment/X`). `discover_vault_series` indexa aquestes carpetes per la seva *etiqueta activa esperada* (`Seguiment/X`). Si un correu arriba amb aquesta etiqueta i la sèrie ja és tancada:
+1. `pick_destination` retorna `dest = .../Temes seguiment tancats/X/`, `is_closed=True` i un warning.
+2. La nota i adjunts s'arxiven igualment a la carpeta tancada (no es perd informació).
+3. El log emet `[TANCADA]` al costat del fil i el `summary['sync_closed_warnings']` recorda a l'usuari que pot esborrar manualment l'etiqueta a Gmail.
+
+**Dispatcher**: si un fil té múltiples etiquetes vault, prioritat `Projectes > Proveïdors > Seguiment > Reunions vàries`. La primary va al `labels:` del frontmatter; les altres vault-labels a `tags:`. Les no-vault s'ignoren.
+
+**Idempotència** (`<vault>/zConfig/.processed_threads.json`):
+- Per cada `thread_id`: `{message_count, archived_at, dest_path}`.
+- Abans del fetch full, fa `peek_thread` (crida minimal) per saber `message_count`. Si no ha crescut, salta el fil (estalvia descàrregues).
+- Si ha crescut → `fetch_thread_full` + regenera la nota sencera (sobreescriu). Adjunts: `place_attachment` reusa els que ja existeixen amb bytes idèntics; només els nous afegeixen sufix.
+
+**Format de la nota** (`<dest>/Correus/YYMMDD_<assumpte_normalitzat>.md`):
+```markdown
+---
+type: correu
+thread_id: <id>
+data: 2026-05-20
+assumpte: "Original sense Re:/Fwd:"
+labels:
+  - "Seguiment/Joan"
+tags:
+  - "Projectes/X"
+---
+
+## 2026-05-20 09:15 — Nom Cognom <email>
+
+[cos pla — text/plain si existeix, altrament HTML→text amb html2text]
+
+**Adjunts:**
+- [[Fitxers/260520_informe.pdf]]
+
+## 2026-05-20 14:30 — Altra Persona <email> (resposta)
+
+[cos]
+```
+
+- Data del nom de fitxer i del frontmatter = data del **primer missatge** del fil.
+- `normalize_subject`: treu `Re:`/`Fwd:`/`Fw:`/`Rv:`/`Rep:` repetits, retalla a 60 chars, sanitza chars de path, espais → `_`.
+
+**Adjunts**: a `<dest>/Fitxers/YYMMDD_<nom>` (idempotent: bytes iguals reusen; bytes diferents → sufix `_2`, `_3`, …). Enllaços `[[Fitxers/...]]` sota cada missatge corresponent.
+
+**UI (2 pàgines)**:
+1. **Pàg. 0** — Selector `date_from` (default 7 dies enrere) + nota sobre el flag de Sincronització. Botó "Començar".
+2. **Pàg. 1** — `QPlainTextEdit` amb log live + barra de progrés. Al final, panell de resum amb fils arxivats, saltats, etiquetes creades, avisos i errors. Botó "Aturar" actiu durant l'execució (avorta entre fils, no desfà els ja arxivats).
+
+**Logs**: a més del log de la UI, escriu `data/email_archive_<timestamp>.log` (FileHandler dedicat afegit al root logger durant la sessió i retirat en acabar).
+
+**Què NO fa**:
+- No esborra correus a Gmail (només llegeix).
+- No esborra etiquetes a Gmail automàticament (orphans → avís al resum).
+- No toca `semantic_memory.json` ni `Vocabulari.md`.
+- No mou ni renombra carpetes existents del vault (només crea `Correus/`/`Fitxers/` dins de cada sèrie si no hi són).
 
 ## Wizard Correccio — Flux Detallat
 

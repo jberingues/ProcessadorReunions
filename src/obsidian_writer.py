@@ -119,6 +119,98 @@ class ObsidianWriter:
         except Exception:
             return False
 
+    def create_email_thread_note(self, thread: dict, dest_dir,
+                                 primary_label: str,
+                                 extra_labels: list[str] | None = None) -> tuple[Path, list[Path]]:
+        """Escriu una nota amb el fil sencer (tots els missatges + adjunts).
+
+        Args:
+            thread: dict amb claus `thread_id`, `label_names` (ignorat aquí
+                — el caller passa explicitament primary/extra), `messages`.
+                Cada missatge: `message_id`, `date`, `from`, `to`, `cc`,
+                `subject`, `body_text`, `attachments` (list de
+                `{filename, mime, data: bytes}`).
+            dest_dir: directori de la sèrie (e.g. .../Seguiment/Joan).
+            primary_label: etiqueta principal (la que ha decidit el destí).
+            extra_labels: altres etiquetes vault del fil, van a `tags:`.
+
+        Retorna: (path_de_la_nota, list[paths_d'adjunts_desats]).
+        Sobreescriu si la nota ja existeix (regeneració completa).
+        """
+        from email_archiver import normalize_subject, place_attachment
+        import email.utils as _email_utils
+
+        extra_labels = extra_labels or []
+        dest_dir = Path(dest_dir)
+        correus_dir = dest_dir / 'Correus'
+        fitxers_dir = dest_dir / 'Fitxers'
+        correus_dir.mkdir(parents=True, exist_ok=True)
+
+        messages = thread.get('messages') or []
+        if not messages:
+            raise ValueError("Fil sense missatges")
+
+        first = messages[0]
+        yymmdd = first['date'].strftime('%y%m%d')
+        iso_date = first['date'].strftime('%Y-%m-%d')
+        subject_raw = first.get('subject') or '(sense assumpte)'
+        note_path = correus_dir / f"{yymmdd}_{normalize_subject(subject_raw)}.md"
+
+        # Adjunts (descarregats abans d'escriure la nota perquè calen els paths).
+        msg_attachment_paths: dict[str, list[Path]] = {}
+        all_attachment_paths: list[Path] = []
+        for m in messages:
+            saved: list[Path] = []
+            for att in m.get('attachments') or []:
+                ap = place_attachment(fitxers_dir, yymmdd, att['filename'], att['data'])
+                saved.append(ap)
+                all_attachment_paths.append(ap)
+            msg_attachment_paths[m['message_id']] = saved
+
+        def yaml_list(items: list[str], key: str) -> str:
+            if not items:
+                return f"{key}: []"
+            esc = [it.replace('"', '\\"') for it in items]
+            return f"{key}:\n" + "\n".join(f'  - "{e}"' for e in esc)
+
+        safe_subject = subject_raw.replace('"', '\\"')
+        labels_block = yaml_list([primary_label] if primary_label else [], 'labels')
+        tags_block = yaml_list(extra_labels, 'tags')
+
+        frontmatter = (
+            "---\n"
+            "type: correu\n"
+            f"thread_id: {thread['thread_id']}\n"
+            f"data: {iso_date}\n"
+            f'assumpte: "{safe_subject}"\n'
+            f"{labels_block}\n"
+            f"{tags_block}\n"
+            "---\n"
+        )
+
+        body_blocks: list[str] = []
+        for i, m in enumerate(messages):
+            dt_str = m['date'].strftime('%Y-%m-%d %H:%M')
+            name, addr = _email_utils.parseaddr(m.get('from') or '')
+            sender = name or addr or '(desconegut)'
+            addr_part = f" <{addr}>" if addr else ''
+            suffix = " (resposta)" if i > 0 else ""
+            header = f"## {dt_str} — {sender}{addr_part}{suffix}"
+
+            block_lines = [header, "", (m.get('body_text') or '').strip()]
+            atts = msg_attachment_paths.get(m['message_id'], [])
+            if atts:
+                block_lines.append("")
+                block_lines.append("**Adjunts:**")
+                for ap in atts:
+                    rel = ap.relative_to(dest_dir).as_posix()
+                    block_lines.append(f"- [[{rel}]]")
+            body_blocks.append("\n".join(block_lines))
+
+        content = frontmatter + "\n" + "\n\n".join(body_blocks).rstrip() + "\n"
+        note_path.write_text(content, encoding='utf-8')
+        return note_path, all_attachment_paths
+
     def create_email_note(self, thread: dict, target_dir) -> bool:
         target_dir = Path(target_dir)
         data = thread['date'].strftime('%y%m%d')
