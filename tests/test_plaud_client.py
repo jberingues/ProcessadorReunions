@@ -1,6 +1,7 @@
 """Tests unitaris per a plaud_client. Executar amb:
     uv run python -m unittest discover -s tests
 """
+import os
 import sys
 import unittest
 from datetime import date, datetime, timezone
@@ -14,6 +15,7 @@ from plaud_client import (  # noqa: E402
     PlaudClient,
     PlaudError,
     PlaudNotAuthenticated,
+    _resolve_executable,
     parse_duration,
     parse_file_output,
     parse_list_output,
@@ -127,11 +129,41 @@ class TestStripTranscriptHeader(unittest.TestCase):
         self.assertEqual(strip_transcript_header(""), "")
 
 
+class TestResolveExecutable(unittest.TestCase):
+    def test_troba_via_path_estandard(self):
+        # `ls` és present a /bin/ls a tots els Unix.
+        resolved = _resolve_executable("ls")
+        self.assertIsNotNone(resolved)
+        self.assertTrue(os.path.isabs(resolved))
+
+    def test_troba_via_path_ampliat(self):
+        # Crea un binari fals a un dir, treu-lo del PATH normal, comprova fallback.
+        import stat
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            fake = Path(tmp) / "plaud_fake_xyz"
+            fake.write_text("#!/bin/sh\necho ok\n")
+            fake.chmod(fake.stat().st_mode | stat.S_IXUSR)
+            # PATH minimal sense el tmp dir → resolve via fallback list
+            with patch.dict(os.environ, {"PATH": "/usr/bin:/bin"}, clear=False), \
+                 patch("plaud_client._EXTRA_BIN_PATHS", [tmp]):
+                resolved = _resolve_executable("plaud_fake_xyz")
+            self.assertEqual(resolved, str(fake))
+
+    def test_no_es_troba(self):
+        self.assertIsNone(_resolve_executable("plaud_inexistent_xyz_12345"))
+
+
 class TestPlaudClientSubprocess(unittest.TestCase):
     def test_cli_no_instal_lat(self):
         client = PlaudClient(executable="plaud_inexistent_xyz_12345")
         with self.assertRaises(PlaudCLINotInstalled):
             client._run(["me"])
+
+    def test_constructor_resol_ruta_absoluta(self):
+        # Si el binari es troba (e.g. "ls"), el constructor guarda la ruta absoluta.
+        client = PlaudClient(executable="ls")
+        self.assertTrue(os.path.isabs(client.executable))
 
     @patch("plaud_client.subprocess.run")
     def test_no_autenticat_per_missatge(self, mock_run):

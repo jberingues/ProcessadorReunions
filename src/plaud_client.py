@@ -5,11 +5,46 @@ i requereix `plaud login` previ.
 """
 from __future__ import annotations
 
+import os
 import re
+import shutil
 import subprocess
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from typing import Optional
+
+
+# Quan el GUI s'inicia des del Finder/Dock/launchd el PATH heretat no inclou
+# els bin d'usuari (`~/.npm-global/bin`, Homebrew, etc.), i `subprocess.run`
+# falla amb FileNotFoundError. Ampliem la cerca amb les ubicacions habituals.
+_EXTRA_BIN_PATHS = [
+    os.path.expanduser("~/.npm-global/bin"),
+    os.path.expanduser("~/.local/bin"),
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+]
+
+
+def _resolve_executable(name: str) -> Optional[str]:
+    """Retorna la ruta absoluta del binari, o None si no es troba enlloc."""
+    found = shutil.which(name)
+    if found:
+        return found
+    augmented = os.pathsep.join([*_EXTRA_BIN_PATHS, os.environ.get("PATH", "")])
+    return shutil.which(name, path=augmented)
+
+
+def _augmented_path_env() -> dict:
+    """Còpia de os.environ amb PATH enriquit. El binari `plaud` és un script
+    Node (shebang `#!/usr/bin/env node`) i necessita `node` accessible al
+    subprocés. Quan el GUI s'inicia des del Finder/launchd, ni `plaud` ni
+    `node` són al PATH heretat."""
+    env = os.environ.copy()
+    current = env.get("PATH", "")
+    extras = [p for p in _EXTRA_BIN_PATHS if p not in current.split(os.pathsep)]
+    if extras:
+        env["PATH"] = os.pathsep.join([*extras, current]) if current else os.pathsep.join(extras)
+    return env
 
 
 # El CLI de Plaud emet timestamps sense indicador de zona horària, però en UTC.
@@ -114,7 +149,9 @@ def strip_transcript_header(output: str) -> str:
 
 class PlaudClient:
     def __init__(self, executable: str = "plaud", timeout: int = 30):
-        self.executable = executable
+        # Resol la ruta una sola vegada al constructor. Si no es troba, deixem
+        # el nom curt i el _run llançarà PlaudCLINotInstalled a la primera crida.
+        self.executable = _resolve_executable(executable) or executable
         self.timeout = timeout
 
     def _run(self, args: list[str], timeout: Optional[int] = None) -> str:
@@ -124,6 +161,7 @@ class PlaudClient:
                 capture_output=True,
                 text=True,
                 timeout=timeout or self.timeout,
+                env=_augmented_path_env(),
             )
         except FileNotFoundError as e:
             raise PlaudCLINotInstalled(
