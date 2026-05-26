@@ -2,7 +2,7 @@
 
 Funcionalitat:
 - Gestió d'etiquetes (`list_user_labels`, `create_label`).
-- Cerca de fils des d'una data (`list_thread_ids_since`).
+- Cerca de fils per a un dia concret (`list_thread_ids_for_day`).
 - Peek lleuger d'un fil (etiquetes + nombre de missatges) abans de
   descarregar-lo sencer.
 - Fetch sencer d'un fil amb tots els missatges, headers, body pla
@@ -17,9 +17,35 @@ import email.utils
 import html as html_module
 import logging
 import re
-from datetime import datetime
+from datetime import date, datetime, timedelta
 
 logger = logging.getLogger(__name__)
+
+
+def _headers_to_dict(part: dict) -> dict[str, str]:
+    """Normalitza els headers d'un payload Gmail a un dict case-insensitive."""
+    return {h['name'].lower(): h['value'] for h in part.get('headers', [])}
+
+
+def is_inline_attachment(headers_lower: dict[str, str], mime: str) -> bool:
+    """Heurística per detectar adjunts inline (logos de firma, icones HTML, etc.).
+
+    Filtra quan totes tres condicions es donen:
+    - MIME type és image/*
+    - Content-Disposition és `inline`
+    - Hi ha Content-ID (la imatge és referenciada des del HTML del cos)
+
+    Els documents reals (PDFs, .docx, .xlsx, .zip, ...) o imatges adjuntades
+    de manera explícita pel remitent no compleixen els 3 alhora.
+    """
+    if not mime.startswith('image/'):
+        return False
+    disposition = (headers_lower.get('content-disposition') or '').strip().lower()
+    if not disposition.startswith('inline'):
+        return False
+    if 'content-id' not in headers_lower:
+        return False
+    return True
 
 
 class GmailFetcher:
@@ -48,9 +74,17 @@ class GmailFetcher:
 
     # --- Cerca de fils ---
 
-    def list_thread_ids_since(self, date_from: datetime) -> list[str]:
-        """IDs de fils amb missatges des de `date_from`. Recorre paginació."""
-        q = f"after:{date_from.strftime('%Y/%m/%d')}"
+    def list_thread_ids_for_day(self, target_day: date) -> list[str]:
+        """IDs de fils amb missatges del dia `target_day` (rang [day, day+1d)).
+
+        Usa la query Gmail `after:Y/M/D before:Y/M/D` (after inclusiu,
+        before exclusiu segons els operadors de cerca de Gmail).
+        """
+        if isinstance(target_day, datetime):
+            target_day = target_day.date()
+        next_day = target_day + timedelta(days=1)
+        q = (f"after:{target_day.strftime('%Y/%m/%d')} "
+             f"before:{next_day.strftime('%Y/%m/%d')}")
         ids: list[str] = []
         page_token = None
         while True:
@@ -136,6 +170,10 @@ class GmailFetcher:
         body = part.get('body', {})
 
         if filename:
+            headers_lower = _headers_to_dict(part)
+            if is_inline_attachment(headers_lower, mime):
+                logger.debug("Saltat adjunt inline (probable logo/firma): %s", filename)
+                return
             data_b64 = body.get('data')
             attachment_id = body.get('attachmentId')
             if data_b64 is None and attachment_id:

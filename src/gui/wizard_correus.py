@@ -1,7 +1,7 @@
 """Wizard d'arxivat de correus al vault d'Obsidian.
 
 Flux:
- 1. Pàgina 0 (Configuració): triar `date_from` i confirmar.
+ 1. Pàgina 0 (Configuració): triar el dia a arxivar i confirmar.
  2. Pàgina 1 (Execució): worker que sync etiquetes + arxiva fils;
     log live + barra de progrés. Al final, resum amb llistes d'avisos.
 
@@ -10,7 +10,7 @@ El flag `EMAIL_INCLUDE_SINCRO=true` al `.env` inclou les sèries de
 """
 import logging
 import os
-from datetime import datetime, timedelta
+from datetime import date, datetime
 from pathlib import Path
 
 from PySide6.QtCore import QDate, Qt
@@ -97,12 +97,12 @@ class WizardCorreus(QDialog):
         page.addSpacing(20)
 
         date_row = QHBoxLayout()
-        date_row.addWidget(QLabel("Arxivar correus des de:"))
-        self.date_from = QDateEdit()
-        self.date_from.setCalendarPopup(True)
-        self.date_from.setDate(QDate.currentDate().addDays(-7))
-        self.date_from.setDisplayFormat("dd/MM/yyyy")
-        date_row.addWidget(self.date_from)
+        date_row.addWidget(QLabel("Arxivar correus del dia:"))
+        self.date_day = QDateEdit()
+        self.date_day.setCalendarPopup(True)
+        self.date_day.setDate(QDate.currentDate())
+        self.date_day.setDisplayFormat("dd/MM/yyyy")
+        date_row.addWidget(self.date_day)
         date_row.addStretch()
         page.addLayout(date_row)
 
@@ -176,14 +176,18 @@ class WizardCorreus(QDialog):
             self.btn_next.setText("Començar")
             self.btn_next.setEnabled(True)
             self.btn_cancel.setText("Cancel·lar")
+            self.btn_cancel.setVisible(True)
         elif idx == 1:
             self.btn_back.setEnabled(False)
             running = self.worker is not None and self.worker.isRunning()
             self.btn_next.setEnabled(not running)
             self.btn_next.setText("Tancar")
-            self.btn_cancel.setText("Aturar" if running else "Tancar")
-            if not running:
-                # Reassigna l'acció del botó Next per tancar.
+            if running:
+                self.btn_cancel.setText("Aturar")
+                self.btn_cancel.setVisible(True)
+            else:
+                # Quan ha acabat, només cal un botó: Tancar.
+                self.btn_cancel.setVisible(False)
                 try:
                     self.btn_next.clicked.disconnect()
                 except (TypeError, RuntimeError):
@@ -193,13 +197,13 @@ class WizardCorreus(QDialog):
     # -- Execució --
 
     def _start_archive(self):
-        qd = self.date_from.date()
-        date_from = datetime(qd.year(), qd.month(), qd.day())
+        qd = self.date_day.date()
+        target_day = date(qd.year(), qd.month(), qd.day())
 
         self.log_path = _setup_file_log()
         logger.info(
-            "Iniciant arxivat: date_from=%s include_sincro=%s log=%s",
-            date_from.isoformat(), self.include_sincro, self.log_path,
+            "Iniciant arxivat: target_day=%s include_sincro=%s log=%s",
+            target_day.isoformat(), self.include_sincro, self.log_path,
         )
 
         self.log_view.appendPlainText(f"Log: {self.log_path}")
@@ -209,7 +213,7 @@ class WizardCorreus(QDialog):
 
         self.worker = EmailArchiveWorker(
             self.gmail_fetcher, self.obsidian,
-            self.obsidian.vault, date_from, self.include_sincro,
+            self.obsidian.vault, target_day, self.include_sincro,
             parent=self,
         )
         self.worker.log.connect(self._on_log)
@@ -268,7 +272,7 @@ class WizardCorreus(QDialog):
                 lines.append(f"  ! {l} — esborra l'etiqueta a Gmail")
         if s['sync_orphan_labels']:
             lines.append("")
-            lines.append(f"Etiquetes Gmail sense carpeta vault ({len(s['sync_orphan_labels'])}):")
+            lines.append(f"Etiquetes Gmail sense sèrie al vault ({len(s['sync_orphan_labels'])}):")
             for l in s['sync_orphan_labels']:
                 lines.append(f"  ? {l}")
         if s['errors']:

@@ -17,12 +17,19 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-# Top-level dins de Reunions/ que poden contenir sèries arxivables.
-SERIES_TOP_LEVEL_ACTIVE = ['Seguiment', 'Projectes', 'Proveïdors', 'Reunions vàries']
+# Top-levels dins de Reunions/ amb tractament especial. La resta s'inclouen
+# automàticament si contenen alguna sèrie (carpeta amb subfolder `Reunions/`).
 SERIES_TOP_LEVEL_CLOSED = 'Temes seguiment tancats'
 SERIES_TOP_LEVEL_SINCRO = 'Sincronització'
 
+# Top-levels que MAI s'escanegen com a sèries actives.
+# - zConfig: configuració del vault, no és contingut.
+# - SERIES_TOP_LEVEL_CLOSED: tractament dedicat (closed_by_active_label).
+# Sincronització s'afegeix dinàmicament a aquesta llista quan `include_sincro=False`.
+SERIES_TOP_LEVEL_EXCLUDED = {'zConfig', SERIES_TOP_LEVEL_CLOSED}
+
 # Prioritat per decidir destí quan un fil té múltiples etiquetes de vault.
+# Els top-levels no listats reben prioritat residual (la més baixa).
 DISPATCH_PRIORITY = ['Projectes', 'Proveïdors', 'Seguiment', 'Reunions vàries']
 
 # Path relatiu del JSON d'idempotència dins del vault.
@@ -94,12 +101,14 @@ def discover_vault_series(vault_path: Path | str, include_sincro: bool = False) 
         discovery.warnings.append(f"No s'ha trobat {reunions_root}")
         return discovery
 
-    top_levels = list(SERIES_TOP_LEVEL_ACTIVE)
-    if include_sincro:
-        top_levels.append(SERIES_TOP_LEVEL_SINCRO)
+    excluded = set(SERIES_TOP_LEVEL_EXCLUDED)
+    if not include_sincro:
+        excluded.add(SERIES_TOP_LEVEL_SINCRO)
 
-    for tl in top_levels:
-        for label, path in _walk_series(reunions_root / tl, tl):
+    for top in sorted(reunions_root.iterdir()):
+        if not top.is_dir() or _is_template(top.name) or top.name in excluded:
+            continue
+        for label, path in _walk_series(top, top.name):
             discovery.active[label] = path
 
     # Tancades: les indexem per l'etiqueta *activa* esperada perquè el cas

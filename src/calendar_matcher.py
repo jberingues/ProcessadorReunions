@@ -8,7 +8,13 @@ from googleapiclient.discovery import build
 SCOPES = [
     'https://www.googleapis.com/auth/calendar.readonly',
     'https://www.googleapis.com/auth/directory.readonly',
+    # Gmail: split en dos scopes mínims. `readonly` per llegir fils + adjunts;
+    # `labels` per crear/editar etiquetes user (no per modificar correus ni
+    # aplicar etiquetes a missatges — només gestió de l'inventari d'etiquetes).
+    # Necessari perquè `EmailArchiveWorker` crea automàticament les etiquetes
+    # de sèries del vault.
     'https://www.googleapis.com/auth/gmail.readonly',
+    'https://www.googleapis.com/auth/gmail.labels',
 ]
 
 class CalendarMatcher:

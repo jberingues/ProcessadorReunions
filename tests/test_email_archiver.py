@@ -85,13 +85,25 @@ class TestDiscoverVaultSeries(unittest.TestCase):
         self.assertEqual(d.active, {})
         self.assertIn("Seguiment/A10Pro", d.closed_by_active_label)
 
-    def test_unknown_top_level_ignored(self):
-        # 'Informació' i 'Lectura' existeixen al vault real però NO han de
-        # generar etiquetes.
+    def test_other_top_levels_included(self):
+        # Top-levels no hardcoded (e.g. 'Informació') s'inclouen si tenen
+        # alguna carpeta amb subfolder 'Reunions/'.
         _make_series(self.reunions, "Informació/Factures")
         _make_series(self.reunions, "Lectura/Llibres")
         d = discover_vault_series(self.tmp)
-        self.assertEqual(d.active, {})
+        self.assertIn("Informació/Factures", d.active)
+        self.assertIn("Lectura/Llibres", d.active)
+
+    def test_excluded_top_levels_skipped(self):
+        # zConfig i Temes seguiment tancats no s'escanegen com a sèries actives.
+        (self.reunions / "zConfig").mkdir(parents=True)
+        _make_series(self.reunions, "Temes seguiment tancats/A10Pro")
+        d = discover_vault_series(self.tmp)
+        # zConfig no genera etiquetes.
+        self.assertEqual([l for l in d.active if l.startswith("zConfig")], [])
+        # Tancades van al diccionari de tancades, no a actives.
+        self.assertNotIn("Temes seguiment tancats/A10Pro", d.active)
+        self.assertIn("Seguiment/A10Pro", d.closed_by_active_label)
 
     def test_returns_warning_when_no_reunions_root(self):
         d = discover_vault_series(self.tmp / "no-existent")

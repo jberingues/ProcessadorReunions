@@ -23,7 +23,7 @@ uv run python -m unittest discover -s tests
 
 - `.env` — must contain `OBSIDIAN_VAULT_PATH=/path/to/vault` and `LLM_MODELH=<litellm model id>`. Opcional: `EMAIL_INCLUDE_SINCRO=true` per incloure les sèries de `Sincronització/` en l'arxivat de correus (vegeu "Wizard Correus").
 - `config/google_credentials.json` — OAuth2 credentials from Google Cloud Console (Calendar + Gmail API)
-- `config/token.pickle` — auto-generated on first run after OAuth browser flow
+- `config/token.pickle` — auto-generated on first run after OAuth browser flow. **Scopes**: `calendar.readonly`, `directory.readonly`, `gmail.readonly`, `gmail.labels` (definits a `calendar_matcher.py:SCOPES`). El split Gmail és intencionat: `gmail.readonly` per llegir fils/adjunts; `gmail.labels` només per crear/editar etiquetes (no aplicar-les a correus). Si afegeixes/canvies scopes, cal esborrar el token (`rm config/token.pickle`) i tornar a executar l'app per refer el flux OAuth amb els nous permisos.
 - **Plaud CLI**: `npm install -g @plaud-ai/cli` + un cop a la vida `plaud login` (OAuth al navegador). El binari ha d'estar al `PATH`.
 
 ## Note Lifecycle (filename suffixes)
@@ -80,12 +80,13 @@ Google Calendar OAuth (credentials a `config/`). `_parse_event(event)` retorna `
 **`gmail_fetcher.py` — `GmailFetcher`**
 Embolcall sobre l'API Gmail (OAuth compartit amb Calendar):
 - `list_user_labels()` / `create_label(name)` — gestió d'etiquetes user (idempotent).
-- `list_thread_ids_since(date_from)` — IDs de fils amb `after:` paginat.
+- `list_thread_ids_for_day(target_day)` — IDs de fils amb missatges del dia indicat (`after:Y/M/D before:Y/M/(D+1)`, paginat).
 - `peek_thread(id, labels_index)` — crida `format=minimal` per saber `{label_names, message_count}` sense baixar bodies. Indispensable per al check d'idempotència abans d'un fetch complet.
 - `fetch_thread_full(id, labels_index)` — fil sencer amb tots els missatges (ordenats cronològicament), headers parsejats, `body_text` (text/plain → tal qual; només HTML → conversió amb `html2text` si està disponible) i adjunts descarregats en binari.
+- Filtrat d'adjunts inline (`is_inline_attachment`): es descarten parts amb MIME `image/*` + `Content-Disposition: inline` + `Content-ID` present. Heurística per evitar guardar logos de signatura, icones Outlook i imatges embebudes al cos HTML. Els documents reals (PDF, .docx, .xlsx, .zip, ...) i les imatges adjuntades explícitament com a `attachment` passen el filtre.
 
 **`email_archiver.py`** — Lògica pura per a l'arxivat (sense Qt ni Gmail):
-- `discover_vault_series(vault_path, include_sincro=False) -> VaultDiscovery` — escaneja `Reunions/` i retorna `active = {etiqueta → Path}` per a tots els top-level admesos (`Seguiment`, `Projectes`, `Proveïdors`, `Reunions vàries`, opcionalment `Sincronització`). També `closed_by_active_label = {'Seguiment/X' → Path}` per a sèries de `Temes seguiment tancats/` (es indexen per l'etiqueta *activa* esperada per detectar correus tardans). Salta `x*` i `zConfig`. Detecta sèries niu (e.g. `Proveïdors/ARROW/Microchip`).
+- `discover_vault_series(vault_path, include_sincro=False) -> VaultDiscovery` — escaneja `Reunions/` i retorna `active = {etiqueta → Path}` per a qualsevol top-level que contingui sèries (carpeta amb subfolder `Reunions/`). Excloses sempre: `zConfig` i `Temes seguiment tancats` (tractament dedicat). Exclosa per defecte: `Sincronització` (opt-in via flag). Salta `x*` (plantilles). Detecta sèries niu (e.g. `Proveïdors/ARROW/Microchip`). També retorna `closed_by_active_label = {'Seguiment/X' → Path}` per a sèries de `Temes seguiment tancats/` (indexades per l'etiqueta *activa* esperada per detectar correus tardans).
 - `pick_destination(label_names, discovery) -> DispatchResult` — primary per prioritat `Projectes > Proveïdors > Seguiment > Reunions vàries`. Si la primary és tancada, `is_closed=True` + warning. Les altres etiquetes vault del fil van a `extra_labels`.
 - `normalize_subject(subject, max_len=60)` — treu Re:/Fwd:/Fw:/Rv:/Rep: repetits, sanitza chars de path, retalla, espais → `_`.
 - `place_attachment(files_dir, date_prefix, name, data)` — desa un adjunt idempotentment: si existeix amb bytes idèntics, reusa el path; si col·lisió amb contingut diferent, afegeix sufix `_2`, `_3`, …
@@ -312,7 +313,7 @@ tags:
 **Adjunts**: a `<dest>/Fitxers/YYMMDD_<nom>` (idempotent: bytes iguals reusen; bytes diferents → sufix `_2`, `_3`, …). Enllaços `[[Fitxers/...]]` sota cada missatge corresponent.
 
 **UI (2 pàgines)**:
-1. **Pàg. 0** — Selector `date_from` (default 7 dies enrere) + nota sobre el flag de Sincronització. Botó "Començar".
+1. **Pàg. 0** — Selector d'un dia concret (default = avui) + nota sobre el flag de Sincronització. L'arxivat processa només els fils amb missatges d'aquest dia. Botó "Començar".
 2. **Pàg. 1** — `QPlainTextEdit` amb log live + barra de progrés. Al final, panell de resum amb fils arxivats, saltats, etiquetes creades, avisos i errors. Botó "Aturar" actiu durant l'execució (avorta entre fils, no desfà els ja arxivats).
 
 **Logs**: a més del log de la UI, escriu `data/email_archive_<timestamp>.log` (FileHandler dedicat afegit al root logger durant la sessió i retirat en acabar).
@@ -322,6 +323,12 @@ tags:
 - No esborra etiquetes a Gmail automàticament (orphans → avís al resum).
 - No toca `semantic_memory.json` ni `Vocabulari.md`.
 - No mou ni renombra carpetes existents del vault (només crea `Correus/`/`Fitxers/` dins de cada sèrie si no hi són).
+
+**Gotchas operatius**:
+- **Model d'un dia**: la query Gmail és `after:D before:D+1`. Si oblides executar un dia X, els fils amb missatges *únicament* d'aquell dia no es processaran a futures execucions (no hi ha sweep enrere). Workaround: torna a llançar el wizard amb la data X com a `target_day`.
+- **Correus enviats**: s'inclouen quan formen part d'un fil etiquetat — `fetch_thread_full` baixa tots els missatges (entrants i sortints). Si vols arxivar un correu enviat solo (no resposta), aplica manualment l'etiqueta de sèrie a Gmail abans/després d'enviar-lo.
+- **Forçar re-arxivat d'un fil**: esborra la seva entrada a `<vault>/zConfig/.processed_threads.json` i torna a executar el wizard per a la data del fil. La nota es regenera sencera; els adjunts amb bytes idèntics es reusen (no es dupliquen).
+- **Heurística inline-attachment**: el filtre descarta `image/* + inline + Content-ID`. Un PDF amb Content-ID (rar però possible) es manté; una imatge marcada com `attachment` també. Si trobes adjunts útils descartats o logos colats, mira la combinació exacta dels 3 senyals al missatge font abans d'ajustar `is_inline_attachment`.
 
 ## Wizard Correccio — Flux Detallat
 

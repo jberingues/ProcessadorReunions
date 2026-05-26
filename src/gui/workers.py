@@ -158,14 +158,14 @@ class EmailArchiveWorker(QThread):
     finished = Signal(dict)
     error = Signal(str)
 
-    def __init__(self, fetcher, obsidian, vault_path, date_from,
+    def __init__(self, fetcher, obsidian, vault_path, target_day,
                  include_sincro: bool, parent=None):
         super().__init__(parent)
         self.fetcher = fetcher
         self.obsidian = obsidian
         from pathlib import Path as _P
         self.vault_path = _P(vault_path)
-        self.date_from = date_from
+        self.target_day = target_day
         self.include_sincro = include_sincro
         self._abort = False
 
@@ -227,12 +227,12 @@ class EmailArchiveWorker(QThread):
                 )
             else:
                 summary['sync_orphan_labels'].append(orphan)
-                self.log.emit(f"  ! Etiqueta a Gmail sense carpeta al vault: {orphan}")
+                self.log.emit(f"  ! Etiqueta Gmail sense sèrie corresponent al vault: {orphan}")
 
         labels_index = {l['id']: l['name'] for l in self.fetcher.list_user_labels()}
 
-        self.log.emit(f"Cercant fils des de {self.date_from.strftime('%Y-%m-%d')}...")
-        thread_ids = self.fetcher.list_thread_ids_since(self.date_from)
+        self.log.emit(f"Cercant fils del dia {self.target_day.strftime('%Y-%m-%d')}...")
+        thread_ids = self.fetcher.list_thread_ids_for_day(self.target_day)
         total = len(thread_ids)
         self.log.emit(f"Trobats {total} fils.")
 
