@@ -143,6 +143,45 @@ class MeetingAnalyzerWorker(QThread):
             self.error.emit(str(e))
 
 
+class GmailLabelSyncWorker(QThread):
+    """Sincronitza etiquetes vault → Gmail sense arxivar correus.
+
+    Crea les etiquetes que falten per a sèries del vault, reporta orfes
+    i tancades. No fa cap operació destructiva.
+
+    Signals:
+      log(str): missatges en text per al log live.
+      finished(object): LabelSyncResult amb el resum.
+      error(str): error fatal.
+    """
+    log = Signal(str)
+    finished = Signal(object)
+    error = Signal(str)
+
+    def __init__(self, fetcher, vault_path, include_sincro: bool, parent=None):
+        super().__init__(parent)
+        self.fetcher = fetcher
+        from pathlib import Path as _P
+        self.vault_path = _P(vault_path)
+        self.include_sincro = include_sincro
+
+    def run(self):
+        try:
+            from email_archiver import discover_vault_series, sync_gmail_labels
+            self.log.emit("Escanejant el vault...")
+            discovery = discover_vault_series(self.vault_path, include_sincro=self.include_sincro)
+            self.log.emit(
+                f"Trobades {len(discovery.active)} sèries actives, "
+                f"{len(discovery.closed_by_active_label)} tancades."
+            )
+            self.log.emit("Sincronitzant etiquetes amb Gmail...")
+            result = sync_gmail_labels(self.fetcher, discovery, log=lambda m: self.log.emit(f"  {m}"))
+            self.finished.emit(result)
+        except Exception as e:
+            logger.exception("GmailLabelSyncWorker error")
+            self.error.emit(str(e))
+
+
 class EmailArchiveWorker(QThread):
     """Orquestra l'arxivat de correus: sync d'etiquetes, fetch de fils, dispatcher
     al vault i actualització del store d'idempotència.
@@ -183,7 +222,7 @@ class EmailArchiveWorker(QThread):
         from email_archiver import (
             discover_vault_series, pick_destination,
             load_processed_store, save_processed_store,
-            needs_archive, mark_archived,
+            needs_archive, mark_archived, sync_gmail_labels,
         )
 
         summary = {
@@ -204,30 +243,10 @@ class EmailArchiveWorker(QThread):
         )
 
         self.log.emit("Sincronitzant etiquetes amb Gmail...")
-        existing = self.fetcher.list_user_labels()
-        existing_names = {l['name'] for l in existing}
-        expected = set(discovery.active.keys())
-
-        for name in sorted(expected - existing_names):
-            if self._abort:
-                return
-            try:
-                self.fetcher.create_label(name)
-                summary['sync_created_labels'].append(name)
-                self.log.emit(f"  + Creada etiqueta: {name}")
-            except Exception as e:
-                self.log.emit(f"  ! Error creant {name}: {e}")
-
-        for orphan in sorted(existing_names - expected):
-            if orphan in discovery.closed_by_active_label:
-                summary['sync_closed_warnings'].append(orphan)
-                self.log.emit(
-                    f"  ! Sèrie tancada: {orphan} (esborra l'etiqueta a Gmail "
-                    f"manualment quan vulguis)"
-                )
-            else:
-                summary['sync_orphan_labels'].append(orphan)
-                self.log.emit(f"  ! Etiqueta Gmail sense sèrie corresponent al vault: {orphan}")
+        sync = sync_gmail_labels(self.fetcher, discovery, log=lambda m: self.log.emit(f"  {m}"))
+        summary['sync_created_labels'] = sync.created
+        summary['sync_orphan_labels'] = sync.orphan
+        summary['sync_closed_warnings'] = sync.closed
 
         labels_index = {l['id']: l['name'] for l in self.fetcher.list_user_labels()}
 

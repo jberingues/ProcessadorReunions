@@ -1,4 +1,6 @@
-from PySide6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QPushButton, QLabel
+import os
+
+from PySide6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QPushButton, QLabel, QMessageBox
 from PySide6.QtCore import Qt
 from calendar_matcher import CalendarMatcher
 from obsidian_writer import ObsidianWriter
@@ -11,6 +13,7 @@ from wizard_nou_projecte import WizardNouProjecte
 from wizard_correus import WizardCorreus
 from wizard_fitxers import WizardFitxers
 from gmail_fetcher import GmailFetcher
+from workers import GmailLabelSyncWorker
 
 
 class MainWindow(QMainWindow):
@@ -19,10 +22,12 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Processador de Reunions")
         self.setMinimumSize(400, 300)
 
+        self.vault_path = vault_path
         self.calendar = CalendarMatcher()
         self.obsidian = ObsidianWriter(vault_path)
         self.gmail_fetcher = GmailFetcher(self.calendar.gmail)
         self.plaud_client = PlaudClient()
+        self._label_sync_worker: GmailLabelSyncWorker | None = None
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -46,6 +51,12 @@ class MainWindow(QMainWindow):
         self.btn_correus.setStyleSheet("font-size: 14px;")
         self.btn_correus.clicked.connect(self._open_correus)
         layout.addWidget(self.btn_correus)
+
+        self.btn_sync_labels = QPushButton("Sincronitzar etiquetes Gmail")
+        self.btn_sync_labels.setMinimumHeight(50)
+        self.btn_sync_labels.setStyleSheet("font-size: 14px;")
+        self.btn_sync_labels.clicked.connect(self._sync_gmail_labels)
+        layout.addWidget(self.btn_sync_labels)
 
         self.btn_fitxers = QPushButton("Entrar fitxers")
         self.btn_fitxers.setMinimumHeight(50)
@@ -77,7 +88,7 @@ class MainWindow(QMainWindow):
         self.btn_nou_projecte.clicked.connect(self._open_nou_projecte)
         layout.addWidget(self.btn_nou_projecte)
 
-        self._all_buttons = [self.btn_transcripcions, self.btn_correus, self.btn_fitxers, self.btn_correccio, self.btn_processar, self.btn_processar_correus, self.btn_nou_projecte]
+        self._all_buttons = [self.btn_transcripcions, self.btn_correus, self.btn_sync_labels, self.btn_fitxers, self.btn_correccio, self.btn_processar, self.btn_processar_correus, self.btn_nou_projecte]
 
     def _open_transcripcions(self):
         self._disable_all()
@@ -102,6 +113,45 @@ class MainWindow(QMainWindow):
         wizard = WizardCorreus(self.gmail_fetcher, self.obsidian, self)
         wizard.finished.connect(self._wizard_closed)
         wizard.open()
+
+    def _sync_gmail_labels(self):
+        """Sincronitza les etiquetes vault → Gmail. Sense diàleg: el resultat
+        es mostra com a QMessageBox en acabar. Ideal després de crear una
+        sèrie nova al vault."""
+        self._disable_all()
+        include_sincro = os.environ.get("EMAIL_INCLUDE_SINCRO", "").lower() == "true"
+        self._label_sync_worker = GmailLabelSyncWorker(
+            self.gmail_fetcher, self.vault_path, include_sincro, self
+        )
+        self._label_sync_worker.finished.connect(self._on_label_sync_finished)
+        self._label_sync_worker.error.connect(self._on_label_sync_error)
+        self._label_sync_worker.start()
+
+    def _on_label_sync_finished(self, result):
+        self._wizard_closed()
+        lines = []
+        if result.created:
+            lines.append(f"Creades a Gmail ({len(result.created)}):")
+            lines.extend(f"  + {n}" for n in result.created)
+        else:
+            lines.append("Cap etiqueta nova: el vault i Gmail ja estan sincronitzats.")
+        if result.failed:
+            lines.append("")
+            lines.append(f"Errors ({len(result.failed)}):")
+            lines.extend(f"  ! {n}: {err}" for n, err in result.failed)
+        if result.closed:
+            lines.append("")
+            lines.append(f"Etiquetes de sèries tancades ({len(result.closed)}) — esborrables manualment a Gmail:")
+            lines.extend(f"  ~ {n}" for n in result.closed)
+        if result.orphan:
+            lines.append("")
+            lines.append(f"Etiquetes a Gmail sense sèrie al vault ({len(result.orphan)}):")
+            lines.extend(f"  ? {n}" for n in result.orphan)
+        QMessageBox.information(self, "Sincronització d'etiquetes", "\n".join(lines))
+
+    def _on_label_sync_error(self, msg: str):
+        self._wizard_closed()
+        QMessageBox.critical(self, "Error sincronitzant etiquetes", msg)
 
     def _open_fitxers(self):
         self._disable_all()

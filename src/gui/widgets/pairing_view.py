@@ -119,18 +119,19 @@ class PairingView(QWidget):
         layout.addWidget(self.status_label)
 
         tables_row = QHBoxLayout()
-        # Taula calendari
-        cal_box = QVBoxLayout()
-        cal_box.addWidget(QLabel("Reunions del calendari:"))
-        self.table_cal = self._make_table(["Hora", "Títol", "Durada", "Estat"])
-        cal_box.addWidget(self.table_cal)
-        tables_row.addLayout(cal_box)
-        # Taula Plaud
+        # Taula Plaud (esquerra) — es pot multi-seleccionar perquè una
+        # gravació no aparellada s'inclogui al flux com a "orfe seleccionada".
         plaud_box = QVBoxLayout()
         plaud_box.addWidget(QLabel("Gravacions Plaud:"))
         self.table_plaud = self._make_table(["Hora", "Nom", "Durada", "Estat"])
         plaud_box.addWidget(self.table_plaud)
         tables_row.addLayout(plaud_box)
+        # Taula calendari (dreta)
+        cal_box = QVBoxLayout()
+        cal_box.addWidget(QLabel("Reunions del calendari:"))
+        self.table_cal = self._make_table(["Hora", "Títol", "Durada", "Estat"])
+        cal_box.addWidget(self.table_cal)
+        tables_row.addLayout(cal_box)
         layout.addLayout(tables_row, stretch=2)
 
         actions = QHBoxLayout()
@@ -162,7 +163,9 @@ class PairingView(QWidget):
         t.setColumnCount(len(headers))
         t.setHorizontalHeaderLabels(headers)
         t.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        t.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        # ExtendedSelection: Cmd+click per multi-selecció. Util sobretot a la
+        # taula de Plaud per marcar diverses gravacions orfes com a migrar.
+        t.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
         t.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         t.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         # Força el color de selecció igual tant si la taula té focus com si no,
@@ -345,15 +348,20 @@ class PairingView(QWidget):
         rows = self.table_plaud.selectionModel().selectedRows() if self.table_plaud.selectionModel() else []
         return rows[0].row() if rows else None
 
+    def _selected_recording_indices(self) -> list[int]:
+        rows = self.table_plaud.selectionModel().selectedRows() if self.table_plaud.selectionModel() else []
+        return sorted(r.row() for r in rows)
+
     def _update_pair_btn(self):
-        ei = self._selected_event_index()
-        ri = self._selected_recording_index()
-        if ei is None or ri is None:
+        # Per aparellar manualment cal exactament 1 fila a cada taula (la
+        # multi-selecció de Plaud serveix per marcar orfes, no per aparellar).
+        cal_rows = self.table_cal.selectionModel().selectedRows() if self.table_cal.selectionModel() else []
+        plaud_rows = self.table_plaud.selectionModel().selectedRows() if self.table_plaud.selectionModel() else []
+        if len(cal_rows) != 1 or len(plaud_rows) != 1:
             self.btn_pair.setEnabled(False)
             return
-        ev = self.events[ei]
-        rec = self.recordings[ri]
-        # No es pot aparellar si algun d'ells ja és en un parell
+        ev = self.events[cal_rows[0].row()]
+        rec = self.recordings[plaud_rows[0].row()]
         used_ev = {id(p.event) for p in self.pairs}
         used_rec = {p.recording.file_id for p in self.pairs}
         self.btn_pair.setEnabled(id(ev) not in used_ev and rec.file_id not in used_rec)
@@ -427,3 +435,12 @@ class PairingView(QWidget):
         unmatched_events = [e for e in self.events if id(e) not in used_ev]
         unmatched_recs = [r for r in self.recordings if r.file_id not in used_rec]
         return list(self.pairs), unmatched_events, unmatched_recs
+
+    def get_selected_orphan_recordings(self) -> list[PlaudRecording]:
+        """Gravacions seleccionades a la taula Plaud que NO formen part de cap parell.
+        Permet a l'usuari incloure al flux gravacions sense reunió al calendari."""
+        used_rec = {p.recording.file_id for p in self.pairs}
+        return [
+            self.recordings[i] for i in self._selected_recording_indices()
+            if self.recordings[i].file_id not in used_rec
+        ]

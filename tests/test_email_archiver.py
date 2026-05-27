@@ -20,6 +20,9 @@ from email_archiver import (
     save_processed_store,
     needs_archive,
     mark_archived,
+    sync_gmail_labels,
+    LabelSyncResult,
+    VaultDiscovery,
 )
 
 
@@ -310,6 +313,77 @@ class TestProcessedStore(unittest.TestCase):
         (self.tmp / "zConfig").mkdir()
         (self.tmp / "zConfig" / ".processed_threads.json").write_text("not json")
         self.assertEqual(load_processed_store(self.tmp), {})
+
+
+class _FakeGmailFetcher:
+    """Doble simple del GmailFetcher per a tests de sync."""
+    def __init__(self, existing_labels: list[str], create_fail: set | None = None):
+        self._labels = list(existing_labels)
+        self._create_fail = create_fail or set()
+        self.created_calls: list[str] = []
+
+    def list_user_labels(self) -> list[dict]:
+        return [{'id': f'L{i}', 'name': n} for i, n in enumerate(self._labels)]
+
+    def create_label(self, name: str):
+        self.created_calls.append(name)
+        if name in self._create_fail:
+            raise RuntimeError(f"boom for {name}")
+        self._labels.append(name)
+
+
+class TestSyncGmailLabels(unittest.TestCase):
+    def test_crea_etiquetes_que_falten(self):
+        discovery = VaultDiscovery(active={'Seguiment/Joan': Path('/x'), 'Projectes/Foo': Path('/y')})
+        fetcher = _FakeGmailFetcher(existing_labels=['Seguiment/Joan'])
+        result = sync_gmail_labels(fetcher, discovery)
+        self.assertEqual(result.created, ['Projectes/Foo'])
+        self.assertEqual(fetcher.created_calls, ['Projectes/Foo'])
+        self.assertEqual(result.failed, [])
+        self.assertEqual(result.orphan, [])
+        self.assertEqual(result.closed, [])
+
+    def test_no_fa_res_si_tot_sincronitzat(self):
+        discovery = VaultDiscovery(active={'Seguiment/Joan': Path('/x')})
+        fetcher = _FakeGmailFetcher(existing_labels=['Seguiment/Joan'])
+        result = sync_gmail_labels(fetcher, discovery)
+        self.assertEqual(result.created, [])
+        self.assertEqual(fetcher.created_calls, [])
+
+    def test_orfes_no_es_creen_ni_esborren(self):
+        discovery = VaultDiscovery(active={'Seguiment/Joan': Path('/x')})
+        fetcher = _FakeGmailFetcher(existing_labels=['Seguiment/Joan', 'Etiqueta vella'])
+        result = sync_gmail_labels(fetcher, discovery)
+        self.assertEqual(result.created, [])
+        self.assertEqual(result.orphan, ['Etiqueta vella'])
+        # 'Etiqueta vella' segueix a Gmail
+        self.assertIn('Etiqueta vella', {l['name'] for l in fetcher.list_user_labels()})
+
+    def test_tancades_es_marquen_a_part(self):
+        discovery = VaultDiscovery(
+            active={'Seguiment/Actiu': Path('/a')},
+            closed_by_active_label={'Seguiment/Antic': Path('/closed/antic')},
+        )
+        fetcher = _FakeGmailFetcher(existing_labels=['Seguiment/Actiu', 'Seguiment/Antic'])
+        result = sync_gmail_labels(fetcher, discovery)
+        self.assertEqual(result.closed, ['Seguiment/Antic'])
+        self.assertEqual(result.orphan, [])
+
+    def test_errors_de_creacio_es_capturen(self):
+        discovery = VaultDiscovery(active={'A': Path('/a'), 'B': Path('/b')})
+        fetcher = _FakeGmailFetcher(existing_labels=[], create_fail={'B'})
+        result = sync_gmail_labels(fetcher, discovery)
+        self.assertEqual(result.created, ['A'])
+        self.assertEqual(len(result.failed), 1)
+        self.assertEqual(result.failed[0][0], 'B')
+        self.assertIn('boom', result.failed[0][1])
+
+    def test_log_callback_rep_missatges(self):
+        discovery = VaultDiscovery(active={'Nova': Path('/x')})
+        fetcher = _FakeGmailFetcher(existing_labels=[])
+        msgs = []
+        sync_gmail_labels(fetcher, discovery, log=msgs.append)
+        self.assertTrue(any('Nova' in m for m in msgs))
 
 
 if __name__ == "__main__":

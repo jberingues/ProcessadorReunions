@@ -287,3 +287,46 @@ def mark_archived(store: dict, thread_id: str, message_count: int, dest_rel_path
         'archived_at': datetime.now(timezone.utc).isoformat(),
         'dest_path': dest_rel_path,
     }
+
+
+@dataclass
+class LabelSyncResult:
+    """Resum d'una sincronització d'etiquetes vault → Gmail."""
+    created: list[str] = field(default_factory=list)
+    failed: list[tuple[str, str]] = field(default_factory=list)  # (etiqueta, error)
+    orphan: list[str] = field(default_factory=list)              # a Gmail, no al vault
+    closed: list[str] = field(default_factory=list)              # sèrie tancada
+
+
+def sync_gmail_labels(fetcher, discovery: VaultDiscovery, log=None) -> LabelSyncResult:
+    """Crea a Gmail les etiquetes que falten respecte el vault.
+
+    No esborra cap etiqueta de Gmail (decisió de disseny: orphans s'avisen,
+    mai s'eliminen automàticament). El `log` és un callable opcional que
+    rep missatges de progrés (per a UI live)."""
+    existing_names = {l['name'] for l in fetcher.list_user_labels()}
+    expected = set(discovery.active.keys())
+    result = LabelSyncResult()
+
+    for name in sorted(expected - existing_names):
+        try:
+            fetcher.create_label(name)
+            result.created.append(name)
+            if log:
+                log(f"+ Creada etiqueta: {name}")
+        except Exception as e:
+            result.failed.append((name, str(e)))
+            if log:
+                log(f"! Error creant {name}: {e}")
+
+    for orphan in sorted(existing_names - expected):
+        if orphan in discovery.closed_by_active_label:
+            result.closed.append(orphan)
+            if log:
+                log(f"~ Sèrie tancada: {orphan} (esborra l'etiqueta a Gmail manualment quan vulguis)")
+        else:
+            result.orphan.append(orphan)
+            if log:
+                log(f"? Etiqueta Gmail sense sèrie corresponent al vault: {orphan}")
+
+    return result

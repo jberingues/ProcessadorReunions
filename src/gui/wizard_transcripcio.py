@@ -19,8 +19,9 @@ from widgets.transcript_editor import TranscriptEditor
 from workers import PlaudTranscriptWorker
 
 
-# Una unitat de feina és un parell aparellat o una gravació orfe (sense reunió
-# al calendari). Les reunions sense gravació es descarten — no entren al flux.
+# Unitat de feina: un parell confirmat o una gravació orfe que l'usuari ha
+# seleccionat explícitament a la pàg. 0 per migrar-la sense reunió al calendari.
+# Reunions sense gravació es descarten — no hi ha àudio per transcriure.
 WorkItem = Union[Pair, PlaudRecording]
 
 _MATCH_THRESHOLD = 0.4
@@ -229,7 +230,8 @@ class WizardTranscripcio(QDialog):
         """Retorna un dict compatible amb ObsidianWriter.create_simple_note."""
         if isinstance(item, Pair):
             return item.event
-        # Gravació orfe → fabriquem dict amb metadades del Plaud
+        # Gravació orfe seleccionada → fabriquem dict amb metadades del Plaud.
+        # El nom es manté tal qual el dóna Plaud (decisió de l'usuari).
         rec: PlaudRecording = item
         start = rec.start_at
         end = (start + timedelta(seconds=rec.duration_seconds)) if start else start
@@ -268,8 +270,9 @@ class WizardTranscripcio(QDialog):
             self._save_current()
 
     def _start_iteration(self):
-        pairs, _unmatched_events, unmatched_recs = self.pairing_view.get_state()
-        work_items: list[WorkItem] = list(pairs) + list(unmatched_recs)
+        pairs, _unmatched_events, _unmatched_recs = self.pairing_view.get_state()
+        orphans = self.pairing_view.get_selected_orphan_recordings()
+        work_items: list[WorkItem] = list(pairs) + list(orphans)
         self.work_queue = sorted(
             work_items,
             key=lambda it: (
@@ -280,8 +283,8 @@ class WizardTranscripcio(QDialog):
         if not self.work_queue:
             QMessageBox.information(
                 self, "Res a processar",
-                "No hi ha cap parell aparellat ni cap gravació orfe. "
-                "Aparella reunions abans de continuar o canvia el dia."
+                "No hi ha cap parell confirmat ni cap gravació seleccionada. "
+                "Aparella reunions o selecciona una gravació al panell esquerre."
             )
             return
         self.total_items = len(self.work_queue)
