@@ -48,7 +48,8 @@ Reunions/
       Ordre del dia propera reunió.md     # idem
       <Any> <Subfolder>.md                # resum anual: històric (Seguiment), daily (Sincro), resums (puntuals)
       Resum projecte <Subfolder>.md       # només a Projectes/<X>/
-      Correus/  Fitxers/                  # opcionals
+      Correus/                            # marcador d'opt-in per al sync d'etiquetes Gmail (pot quedar buida)
+      Fitxers/                            # opcional, per a documentació adjunta
       semantic_memory.json                # memòria semàntica per sèrie
   zConfig/
     Vocabulari.md                         # vocabulari unificat: termes + aliases en sublistes + secció "## Configuració"
@@ -66,7 +67,7 @@ Subfolders amb prefix `x` (e.g. `xProjecte/`, `xProveïdor/`) són **plantilles*
 |------|--------|------------|
 | Entrar transcripcions | `wizard_transcripcio.py` | Pàgina 0 = `PairingView` (Plaud a l'esquerra, Calendar a la dreta). Itera sobre **parells confirmats + gravacions orfes seleccionades**: tria carpeta destí, descarrega transcripció de Plaud (o paste manual com a fallback), desa la nota. Reunions sense gravació es descarten. |
 | Entrar correus | `wizard_correus.py` | Arxivat automàtic de fils Gmail al vault segons etiquetes (vegeu "Wizard Correus — Flux Detallat"). |
-| Sincronitzar etiquetes Gmail | (sense wizard; `GmailLabelSyncWorker` + `QMessageBox`) | Crea a Gmail les etiquetes que falten per a sèries del vault (sense arxivar correus). Ideal després de crear una sèrie nova al vault perquè l'etiqueta aparegui ja a Gmail i la puguis aplicar manualment a fils. No esborra etiquetes òrfenes — només les llista al resum. |
+| Sincronitzar etiquetes Gmail | (sense wizard; `GmailLabelSyncWorker` + `QMessageBox`) | Crea a Gmail les etiquetes que falten per a sèries del vault (sense arxivar correus). Detecta com a sèrie qualsevol carpeta que tingui un subfolder `Correus/` (criteri d'opt-in: l'usuari ha de crear-lo manualment per declarar que la sèrie ha de tenir etiqueta). Ideal després de crear una sèrie nova: crea `Correus/` dins, clica el botó, l'etiqueta apareix a Gmail. No esborra etiquetes òrfenes — només les llista al resum. |
 | Entrar fitxers | `wizard_fitxers.py` | Copia fitxers externs a una carpeta del vault. |
 | Correcció transcripcions | `wizard_correccio.py` | Batch: detecta errors de transcripció en notes sense corregir via LLM + vocabulari i mostra l'editor inline. |
 | Processar reunions | `wizard_processar.py` | Selector per fila amb 4 opcions (`Resum`, `Resum+ordre dia`, `Resum+ordre dia (breu)`, `Sincro`); default segons path actual. Tots tres processats escriuen a `<Subfolder>/<Any> <Subfolder>.md`. Vegeu "Wizard Processar — Flux Detallat". |
@@ -87,7 +88,7 @@ Embolcall sobre l'API Gmail (OAuth compartit amb Calendar):
 - Filtrat d'adjunts inline (`is_inline_attachment`): es descarten parts amb MIME `image/*` + `Content-Disposition: inline` + `Content-ID` present. Heurística per evitar guardar logos de signatura, icones Outlook i imatges embebudes al cos HTML. Els documents reals (PDF, .docx, .xlsx, .zip, ...) i les imatges adjuntades explícitament com a `attachment` passen el filtre.
 
 **`email_archiver.py`** — Lògica pura per a l'arxivat (sense Qt ni Gmail):
-- `discover_vault_series(vault_path, include_sincro=False) -> VaultDiscovery` — escaneja `Reunions/` i retorna `active = {etiqueta → Path}` per a qualsevol top-level que contingui sèries (carpeta amb subfolder `Reunions/`). Excloses sempre: `zConfig` i `Temes seguiment tancats` (tractament dedicat). Exclosa per defecte: `Sincronització` (opt-in via flag). Salta `x*` (plantilles). Detecta sèries niu (e.g. `Proveïdors/ARROW/Microchip`). També retorna `closed_by_active_label = {'Seguiment/X' → Path}` per a sèries de `Temes seguiment tancats/` (indexades per l'etiqueta *activa* esperada per detectar correus tardans).
+- `discover_vault_series(vault_path, include_sincro=False) -> VaultDiscovery` — escaneja `Reunions/` i retorna `active = {etiqueta → Path}` per a qualsevol top-level que contingui sèries. Una carpeta és sèrie **si i només si conté `Correus/`** (`SERIES_SUBFOLDER_MARKER`). És un opt-in explícit: l'usuari crea `Correus/` (pot quedar buida) per declarar que aquesta sèrie ha de rebre etiqueta a Gmail i acceptar arxivat de correus. Sèries que només tenen `Reunions/` (e.g. reunions internes sense intercanvi de correus) **no** generen etiqueta. Excloses sempre: `zConfig` i `Temes seguiment tancats` (tractament dedicat). Exclosa per defecte: `Sincronització` (opt-in via flag). Salta `x*` (plantilles). Detecta sèries niu (e.g. `Proveïdors/ARROW/Microchip`). També retorna `closed_by_active_label = {'Seguiment/X' → Path}` per a sèries de `Temes seguiment tancats/` (indexades per l'etiqueta *activa* esperada per detectar correus tardans; també requereixen `Correus/`).
 - `pick_destination(label_names, discovery) -> DispatchResult` — primary per prioritat `Projectes > Proveïdors > Seguiment > Reunions vàries`. Si la primary és tancada, `is_closed=True` + warning. Les altres etiquetes vault del fil van a `extra_labels`.
 - `normalize_subject(subject, max_len=60)` — treu Re:/Fwd:/Fw:/Rv:/Rep: repetits, sanitza chars de path, retalla, espais → `_`.
 - `place_attachment(files_dir, date_prefix, name, data)` — desa un adjunt idempotentment: si existeix amb bytes idèntics, reusa el path; si col·lisió amb contingut diferent, afegeix sufix `_2`, `_3`, …

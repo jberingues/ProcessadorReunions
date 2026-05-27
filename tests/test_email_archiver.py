@@ -27,9 +27,9 @@ from email_archiver import (
 
 
 def _make_series(root: Path, rel_path: str) -> Path:
-    """Crea una carpeta de sèrie amb subfolder Reunions/."""
+    """Crea una carpeta de sèrie amb el marcador `Correus/`."""
     series = root / rel_path
-    (series / "Reunions").mkdir(parents=True)
+    (series / "Correus").mkdir(parents=True)
     return series
 
 
@@ -53,7 +53,7 @@ class TestDiscoverVaultSeries(unittest.TestCase):
         self.assertIn("Reunions vàries/Noves incorporacions", d.active)
 
     def test_detects_nested_provider(self):
-        # Proveïdors/ARROW/ NO té Reunions/ — només la submarca Microchip sí.
+        # Proveïdors/ARROW/ NO té Correus/ — només la submarca Microchip sí.
         _make_series(self.reunions, "Proveïdors/ARROW/Microchip")
         d = discover_vault_series(self.tmp)
         self.assertIn("Proveïdors/ARROW/Microchip", d.active)
@@ -90,7 +90,7 @@ class TestDiscoverVaultSeries(unittest.TestCase):
 
     def test_other_top_levels_included(self):
         # Top-levels no hardcoded (e.g. 'Informació') s'inclouen si tenen
-        # alguna carpeta amb subfolder 'Reunions/'.
+        # alguna carpeta amb subfolder 'Correus/'.
         _make_series(self.reunions, "Informació/Factures")
         _make_series(self.reunions, "Lectura/Llibres")
         d = discover_vault_series(self.tmp)
@@ -111,6 +111,46 @@ class TestDiscoverVaultSeries(unittest.TestCase):
     def test_returns_warning_when_no_reunions_root(self):
         d = discover_vault_series(self.tmp / "no-existent")
         self.assertTrue(d.warnings)
+
+    def test_folder_with_only_reunions_is_not_a_series(self):
+        # Una carpeta amb només Reunions/ però sense Correus/ NO genera etiqueta.
+        # L'usuari ha de crear Correus/ explícitament per opt-in.
+        series = self.reunions / "Seguiment" / "NoMail"
+        (series / "Reunions").mkdir(parents=True)
+        d = discover_vault_series(self.tmp)
+        self.assertEqual([l for l in d.active if "NoMail" in l], [])
+
+    def test_folder_with_correus_and_other_subfolders_is_one_series(self):
+        # Una sèrie pot tenir Reunions/, Fitxers/, etc. al costat de Correus/.
+        # Es detecta com una sola sèrie i no es descendeix.
+        series = self.reunions / "Proveïdors" / "CELO"
+        (series / "Correus").mkdir(parents=True)
+        (series / "Reunions").mkdir()
+        (series / "Fitxers").mkdir()
+        d = discover_vault_series(self.tmp)
+        self.assertIn("Proveïdors/CELO", d.active)
+        self.assertNotIn("Proveïdors/CELO/Reunions", d.active)
+        self.assertNotIn("Proveïdors/CELO/Fitxers", d.active)
+
+    def test_folder_without_correus_is_not_a_series(self):
+        # Una carpeta organitzativa buida (e.g. proveïdor encara sense Correus/)
+        # NO és sèrie i no genera etiqueta.
+        (self.reunions / "Proveïdors" / "BUIT").mkdir(parents=True)
+        d = discover_vault_series(self.tmp)
+        self.assertEqual([l for l in d.active if "BUIT" in l], [])
+
+    def test_closed_series_requires_correus_too(self):
+        # Les sèries tancades segueixen el mateix criteri: necessiten Correus/.
+        series = self.reunions / "Temes seguiment tancats" / "JoanAntic"
+        (series / "Correus").mkdir(parents=True)
+        d = discover_vault_series(self.tmp)
+        self.assertIn("Seguiment/JoanAntic", d.closed_by_active_label)
+
+    def test_closed_series_without_correus_is_ignored(self):
+        series = self.reunions / "Temes seguiment tancats" / "JoanSenseCorreus"
+        (series / "Reunions").mkdir(parents=True)
+        d = discover_vault_series(self.tmp)
+        self.assertNotIn("Seguiment/JoanSenseCorreus", d.closed_by_active_label)
 
 
 class TestPickDestination(unittest.TestCase):

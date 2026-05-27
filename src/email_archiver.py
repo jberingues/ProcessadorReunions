@@ -35,6 +35,17 @@ DISPATCH_PRIORITY = ['Projectes', 'Proveïdors', 'Seguiment', 'Reunions vàries'
 # Path relatiu del JSON d'idempotència dins del vault.
 PROCESSED_STORE_REL = 'zConfig/.processed_threads.json'
 
+# Marcador que identifica una carpeta com a sèrie a efectes d'etiquetes Gmail
+# i dispatch de correus. L'usuari ha de crear `Correus/` (pot quedar buida)
+# a cada sèrie que vulgui sincronitzar amb Gmail. Es trien `Correus/` com a
+# marcador en lloc de `Reunions/` perquè algunes sèries reben només correus
+# (sense reunions) i altres reunions sense voler arxivar correus.
+SERIES_SUBFOLDER_MARKER = 'Correus'
+
+
+def _is_series_folder(path: Path) -> bool:
+    return (path / SERIES_SUBFOLDER_MARKER).is_dir()
+
 
 @dataclass
 class VaultDiscovery:
@@ -67,11 +78,11 @@ def _is_template(name: str) -> bool:
 
 
 def _walk_series(top_level_dir: Path, label_prefix: str) -> list[tuple[str, Path]]:
-    """Recorre `top_level_dir` recursivament i retorna (etiqueta, path) per
-    a cada directori que contingui un subfolder `Reunions/`.
+    """Recorre `top_level_dir` recursivament i retorna (etiqueta, path) per a
+    cada directori que contingui el marcador `SERIES_SUBFOLDER_MARKER` (`Correus/`).
 
-    Salta x* i zConfig. Si una carpeta té `Reunions/`, la considera sèrie
-    final i no baixa més (no s'admet niu de sèries).
+    Salta x* i zConfig. Una vegada una carpeta es considera sèrie, no baixa més
+    (no s'admet niu de sèries).
     """
     found: list[tuple[str, Path]] = []
     if not top_level_dir.exists():
@@ -81,7 +92,7 @@ def _walk_series(top_level_dir: Path, label_prefix: str) -> list[tuple[str, Path
             continue
         rel = child.relative_to(top_level_dir).as_posix()
         label = f"{label_prefix}/{rel}"
-        if (child / 'Reunions').is_dir():
+        if _is_series_folder(child):
             found.append((label, child))
         else:
             found.extend(_walk_series(child, label))
@@ -118,7 +129,7 @@ def discover_vault_series(vault_path: Path | str, include_sincro: bool = False) 
         for child in sorted(closed_root.iterdir()):
             if not child.is_dir() or _is_template(child.name):
                 continue
-            if (child / 'Reunions').is_dir():
+            if _is_series_folder(child):
                 active_label = f"Seguiment/{child.name}"
                 discovery.closed_by_active_label[active_label] = child
 
