@@ -26,6 +26,11 @@ WorkItem = Union[Pair, PlaudRecording]
 
 _MATCH_THRESHOLD = 0.4
 
+# Subcarpetes que no formen part de la navegació de l'arbre de destí: són
+# estructurals d'una sèrie ('Reunions/' és la destinació final; 'Correus/' i
+# 'Fitxers/' contenen continguts, no sub-sèries) o configuració del vault.
+_NON_NAV_SUBFOLDERS = ('zConfig', 'Reunions', 'Correus', 'Fitxers')
+
 
 def _normalize(text: str) -> str:
     """Minúscules, sense accents, només alfanumèrics i espais."""
@@ -125,37 +130,57 @@ class WizardTranscripcio(QDialog):
         self._add_tree_items(None, self.obsidian.vault / 'Reunions')
         self.tree_dirs.collapseAll()
 
+    def _has_series_descendant(self, directory: Path) -> bool:
+        """True si `directory` conté (recursivament) alguna carpeta amb 'Reunions/'."""
+        try:
+            for d in directory.iterdir():
+                if (not d.is_dir() or d.name.startswith('.')
+                        or d.name in _NON_NAV_SUBFOLDERS):
+                    continue
+                if (d / 'Reunions').is_dir() or self._has_series_descendant(d):
+                    return True
+        except PermissionError:
+            return False
+        return False
+
     def _add_tree_items(self, parent_item, directory: Path):
         """Recursivament afegeix subdirectoris al tree.
 
-        Una carpeta és seleccionable si conté una subcarpeta 'Reunions/'.
-        En aquest cas, el target d'escriptura és '<carpeta>/Reunions/'.
-        No descendim dins de subcarpetes 'Reunions' — són la destinació final
-        i no formen part de la jerarquia de navegació.
+        Una carpeta és seleccionable si conté una subcarpeta 'Reunions/' (el
+        target d'escriptura és '<carpeta>/Reunions/'). Suporta **niu real**:
+        una sèrie pot contenir sub-sèries (e.g. 'Proveïdors/ARROW' amb
+        Reunions/ pròpia i 'Proveïdors/ARROW/Microchip' també amb Reunions/),
+        per això seguim descendint encara que la carpeta ja sigui seleccionable.
+
+        Es poden les branques que ni són sèrie ni contenen cap sèrie (e.g.
+        'Correus/', 'Fitxers/') per no omplir l'arbre de nodes buits.
         """
         try:
             subdirs = sorted(
                 [d for d in directory.iterdir()
                  if d.is_dir() and not d.name.startswith('.')
-                    and d.name not in ('zConfig', 'Reunions')],
+                    and d.name not in _NON_NAV_SUBFOLDERS],
                 key=lambda d: d.name
             )
         except PermissionError:
             return
         for d in subdirs:
+            reunions_subdir = d / 'Reunions'
+            is_series = reunions_subdir.is_dir()
+            if not is_series and not self._has_series_descendant(d):
+                continue  # branca sense cap sèrie: no la mostrem
             item = QTreeWidgetItem(self.tree_dirs if parent_item is None else parent_item)
             item.setText(0, d.name)
-            reunions_subdir = d / 'Reunions'
-            if reunions_subdir.is_dir():
-                # Carpeta de destinació: no descendim, el que hi ha dins
-                # (Annexos, Documentació, etc.) no és part de la navegació.
+            if is_series:
+                # Carpeta de destinació: seleccionable, target = '<carpeta>/Reunions/'.
                 item.setData(0, Qt.ItemDataRole.UserRole, reunions_subdir)
             else:
                 # Node purament organitzatiu (e.g. "Proveïdors", "Projectes")
                 item.setData(0, Qt.ItemDataRole.UserRole, None)
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
                 item.setForeground(0, QColor(140, 140, 140))
-                self._add_tree_items(item, d)
+            # Descendim sempre per exposar sub-sèries niu.
+            self._add_tree_items(item, d)
 
     def _auto_select_folder(self, title: str):
         """Pre-selecciona la carpeta del tree més similar al títol, si supera el llindar."""

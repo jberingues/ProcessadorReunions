@@ -72,6 +72,17 @@ class GmailFetcher:
         created = self.gmail.users().labels().create(userId='me', body=body).execute()
         return {'id': created['id'], 'name': created['name']}
 
+    def rename_label(self, label_id: str, new_name: str) -> dict:
+        """Renombra una etiqueta conservant el seu ID.
+
+        Conserva totes les assignacions de fils/missatges (el rename és sobre
+        la mateixa etiqueta, no en crea una de nova). Scope: `gmail.labels`.
+        """
+        updated = self.gmail.users().labels().patch(
+            userId='me', id=label_id, body={'name': new_name}
+        ).execute()
+        return {'id': updated['id'], 'name': updated['name']}
+
     # --- Cerca de fils ---
 
     def list_thread_ids_for_day(self, target_day: date) -> list[str]:

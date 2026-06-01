@@ -21,6 +21,7 @@ from email_archiver import (
     needs_archive,
     mark_archived,
     sync_gmail_labels,
+    plan_label_migration,
     LabelSyncResult,
     VaultDiscovery,
 )
@@ -42,22 +43,63 @@ class TestDiscoverVaultSeries(unittest.TestCase):
         shutil.rmtree(self.tmp)
 
     def test_detects_flat_series(self):
+        # L'etiqueta és el nom de fulla, no el camí complet.
         _make_series(self.reunions, "Seguiment/Arnau Prunell")
         _make_series(self.reunions, "Projectes/EUROTRACK")
         _make_series(self.reunions, "Proveïdors/CELO")
         _make_series(self.reunions, "Reunions vàries/Noves incorporacions")
         d = discover_vault_series(self.tmp)
-        self.assertIn("Seguiment/Arnau Prunell", d.active)
-        self.assertIn("Projectes/EUROTRACK", d.active)
-        self.assertIn("Proveïdors/CELO", d.active)
-        self.assertIn("Reunions vàries/Noves incorporacions", d.active)
+        self.assertIn("Arnau Prunell", d.active)
+        self.assertIn("EUROTRACK", d.active)
+        self.assertIn("CELO", d.active)
+        self.assertIn("Noves incorporacions", d.active)
+        # El top-level es guarda a part per a la prioritat de dispatch.
+        self.assertEqual(d.top_level["Arnau Prunell"], "Seguiment")
+        self.assertEqual(d.top_level["EUROTRACK"], "Projectes")
 
     def test_detects_nested_provider(self):
         # Proveïdors/ARROW/ NO té Correus/ — només la submarca Microchip sí.
         _make_series(self.reunions, "Proveïdors/ARROW/Microchip")
         d = discover_vault_series(self.tmp)
-        self.assertIn("Proveïdors/ARROW/Microchip", d.active)
-        self.assertNotIn("Proveïdors/ARROW", d.active)
+        self.assertIn("Microchip", d.active)
+        self.assertNotIn("ARROW", d.active)
+        self.assertEqual(d.top_level["Microchip"], "Proveïdors")
+
+    def test_detects_nested_series_with_own_content(self):
+        # Niu real: ARROW té correus propis I conté Microchip amb correus
+        # propis. Totes dues s'han de descobrir com a sèries independents.
+        _make_series(self.reunions, "Proveïdors/ARROW")
+        _make_series(self.reunions, "Proveïdors/ARROW/Microchip")
+        d = discover_vault_series(self.tmp)
+        self.assertIn("ARROW", d.active)
+        self.assertIn("Microchip", d.active)
+        self.assertEqual(d.active["ARROW"], self.reunions / "Proveïdors" / "ARROW")
+        self.assertEqual(
+            d.active["Microchip"],
+            self.reunions / "Proveïdors" / "ARROW" / "Microchip",
+        )
+        self.assertEqual(d.top_level["ARROW"], "Proveïdors")
+        self.assertEqual(d.top_level["Microchip"], "Proveïdors")
+
+    def test_structural_subfolders_not_treated_as_nested_series(self):
+        # Dins d'una sèrie amb Reunions/ i Fitxers/ al costat de Correus/,
+        # cap d'aquestes carpetes estructurals s'ha de detectar com a sèrie.
+        series = self.reunions / "Proveïdors" / "ARROW"
+        (series / "Correus").mkdir(parents=True)
+        (series / "Reunions").mkdir()
+        (series / "Fitxers").mkdir()
+        d = discover_vault_series(self.tmp)
+        self.assertEqual(sorted(d.active.keys()), ["ARROW"])
+
+    def test_leaf_name_collision_warns_and_keeps_first(self):
+        # Dues sèries amb el mateix nom de fulla en top-levels diferents.
+        _make_series(self.reunions, "Seguiment/CRA")
+        _make_series(self.reunions, "Reunions vàries/CRA")
+        d = discover_vault_series(self.tmp)
+        self.assertIn("CRA", d.active)
+        # Es conserva la primera (Reunions vàries < Seguiment alfabèticament).
+        self.assertEqual(d.active["CRA"], self.reunions / "Reunions vàries" / "CRA")
+        self.assertTrue(any("Col·lisió" in w and "CRA" in w for w in d.warnings))
 
     def test_template_folders_skipped(self):
         _make_series(self.reunions, "Seguiment/xSeguiment")
@@ -70,7 +112,7 @@ class TestDiscoverVaultSeries(unittest.TestCase):
         (self.reunions / "zConfig").mkdir(parents=True)
         _make_series(self.reunions, "Seguiment/Joan")
         d = discover_vault_series(self.tmp)
-        self.assertIn("Seguiment/Joan", d.active)
+        self.assertIn("Joan", d.active)
 
     def test_sincro_excluded_by_default(self):
         _make_series(self.reunions, "Sincronització/Sincronització_OT")
@@ -80,13 +122,14 @@ class TestDiscoverVaultSeries(unittest.TestCase):
     def test_sincro_included_when_flag(self):
         _make_series(self.reunions, "Sincronització/Sincronització_OT")
         d = discover_vault_series(self.tmp, include_sincro=True)
-        self.assertIn("Sincronització/Sincronització_OT", d.active)
+        self.assertIn("Sincronització_OT", d.active)
 
     def test_closed_series_indexed_by_active_label(self):
         _make_series(self.reunions, "Temes seguiment tancats/A10Pro")
         d = discover_vault_series(self.tmp)
         self.assertEqual(d.active, {})
-        self.assertIn("Seguiment/A10Pro", d.closed_by_active_label)
+        self.assertIn("A10Pro", d.closed_by_active_label)
+        self.assertEqual(d.top_level["A10Pro"], "Seguiment")
 
     def test_other_top_levels_included(self):
         # Top-levels no hardcoded (e.g. 'Informació') s'inclouen si tenen
@@ -94,19 +137,17 @@ class TestDiscoverVaultSeries(unittest.TestCase):
         _make_series(self.reunions, "Informació/Factures")
         _make_series(self.reunions, "Lectura/Llibres")
         d = discover_vault_series(self.tmp)
-        self.assertIn("Informació/Factures", d.active)
-        self.assertIn("Lectura/Llibres", d.active)
+        self.assertIn("Factures", d.active)
+        self.assertIn("Llibres", d.active)
 
     def test_excluded_top_levels_skipped(self):
         # zConfig i Temes seguiment tancats no s'escanegen com a sèries actives.
         (self.reunions / "zConfig").mkdir(parents=True)
         _make_series(self.reunions, "Temes seguiment tancats/A10Pro")
         d = discover_vault_series(self.tmp)
-        # zConfig no genera etiquetes.
-        self.assertEqual([l for l in d.active if l.startswith("zConfig")], [])
         # Tancades van al diccionari de tancades, no a actives.
-        self.assertNotIn("Temes seguiment tancats/A10Pro", d.active)
-        self.assertIn("Seguiment/A10Pro", d.closed_by_active_label)
+        self.assertEqual(d.active, {})
+        self.assertIn("A10Pro", d.closed_by_active_label)
 
     def test_returns_warning_when_no_reunions_root(self):
         d = discover_vault_series(self.tmp / "no-existent")
@@ -128,9 +169,9 @@ class TestDiscoverVaultSeries(unittest.TestCase):
         (series / "Reunions").mkdir()
         (series / "Fitxers").mkdir()
         d = discover_vault_series(self.tmp)
-        self.assertIn("Proveïdors/CELO", d.active)
-        self.assertNotIn("Proveïdors/CELO/Reunions", d.active)
-        self.assertNotIn("Proveïdors/CELO/Fitxers", d.active)
+        self.assertIn("CELO", d.active)
+        self.assertNotIn("Reunions", d.active)
+        self.assertNotIn("Fitxers", d.active)
 
     def test_folder_without_correus_is_not_a_series(self):
         # Una carpeta organitzativa buida (e.g. proveïdor encara sense Correus/)
@@ -144,13 +185,13 @@ class TestDiscoverVaultSeries(unittest.TestCase):
         series = self.reunions / "Temes seguiment tancats" / "JoanAntic"
         (series / "Correus").mkdir(parents=True)
         d = discover_vault_series(self.tmp)
-        self.assertIn("Seguiment/JoanAntic", d.closed_by_active_label)
+        self.assertIn("JoanAntic", d.closed_by_active_label)
 
     def test_closed_series_without_correus_is_ignored(self):
         series = self.reunions / "Temes seguiment tancats" / "JoanSenseCorreus"
         (series / "Reunions").mkdir(parents=True)
         d = discover_vault_series(self.tmp)
-        self.assertNotIn("Seguiment/JoanSenseCorreus", d.closed_by_active_label)
+        self.assertNotIn("JoanSenseCorreus", d.closed_by_active_label)
 
 
 class TestPickDestination(unittest.TestCase):
@@ -172,37 +213,38 @@ class TestPickDestination(unittest.TestCase):
         self.assertIsNotNone(r.warning)
 
     def test_single_label(self):
-        r = pick_destination(["Seguiment/Joan"], self.d)
+        r = pick_destination(["Joan"], self.d)
         self.assertEqual(r.dest, self.p_joan)
-        self.assertEqual(r.primary_label, "Seguiment/Joan")
+        self.assertEqual(r.primary_label, "Joan")
         self.assertEqual(r.extra_labels, [])
         self.assertFalse(r.is_closed)
 
     def test_priority_projectes_over_seguiment(self):
-        r = pick_destination(["Seguiment/Joan", "Projectes/EUROTRACK"], self.d)
+        # La prioritat es deriva del top-level del path, no de l'etiqueta.
+        r = pick_destination(["Joan", "EUROTRACK"], self.d)
         self.assertEqual(r.dest, self.p_eurotrack)
-        self.assertEqual(r.primary_label, "Projectes/EUROTRACK")
-        self.assertIn("Seguiment/Joan", r.extra_labels)
+        self.assertEqual(r.primary_label, "EUROTRACK")
+        self.assertIn("Joan", r.extra_labels)
 
     def test_priority_proveidors_over_seguiment(self):
-        r = pick_destination(["Seguiment/Joan", "Proveïdors/CELO"], self.d)
+        r = pick_destination(["Joan", "CELO"], self.d)
         self.assertEqual(r.dest, self.p_celo)
-        self.assertEqual(r.primary_label, "Proveïdors/CELO")
+        self.assertEqual(r.primary_label, "CELO")
 
     def test_priority_projectes_over_proveidors(self):
-        r = pick_destination(["Proveïdors/CELO", "Projectes/EUROTRACK"], self.d)
-        self.assertEqual(r.primary_label, "Projectes/EUROTRACK")
+        r = pick_destination(["CELO", "EUROTRACK"], self.d)
+        self.assertEqual(r.primary_label, "EUROTRACK")
 
     def test_closed_series_late_email(self):
-        # Etiqueta Seguiment/A10Pro però la sèrie és tancada.
-        r = pick_destination(["Seguiment/A10Pro"], self.d)
+        # Etiqueta A10Pro però la sèrie és tancada.
+        r = pick_destination(["A10Pro"], self.d)
         self.assertEqual(r.dest, self.p_a10)
         self.assertTrue(r.is_closed)
         self.assertIsNotNone(r.warning)
 
     def test_unknown_vault_labels_ignored(self):
-        r = pick_destination(["Inbox", "Seguiment/Joan", "Spam"], self.d)
-        self.assertEqual(r.primary_label, "Seguiment/Joan")
+        r = pick_destination(["Inbox", "Joan", "Spam"], self.d)
+        self.assertEqual(r.primary_label, "Joan")
         self.assertEqual(r.extra_labels, [])
 
 
@@ -374,25 +416,25 @@ class _FakeGmailFetcher:
 
 class TestSyncGmailLabels(unittest.TestCase):
     def test_crea_etiquetes_que_falten(self):
-        discovery = VaultDiscovery(active={'Seguiment/Joan': Path('/x'), 'Projectes/Foo': Path('/y')})
-        fetcher = _FakeGmailFetcher(existing_labels=['Seguiment/Joan'])
+        discovery = VaultDiscovery(active={'Joan': Path('/x'), 'Foo': Path('/y')})
+        fetcher = _FakeGmailFetcher(existing_labels=['Joan'])
         result = sync_gmail_labels(fetcher, discovery)
-        self.assertEqual(result.created, ['Projectes/Foo'])
-        self.assertEqual(fetcher.created_calls, ['Projectes/Foo'])
+        self.assertEqual(result.created, ['Foo'])
+        self.assertEqual(fetcher.created_calls, ['Foo'])
         self.assertEqual(result.failed, [])
         self.assertEqual(result.orphan, [])
         self.assertEqual(result.closed, [])
 
     def test_no_fa_res_si_tot_sincronitzat(self):
-        discovery = VaultDiscovery(active={'Seguiment/Joan': Path('/x')})
-        fetcher = _FakeGmailFetcher(existing_labels=['Seguiment/Joan'])
+        discovery = VaultDiscovery(active={'Joan': Path('/x')})
+        fetcher = _FakeGmailFetcher(existing_labels=['Joan'])
         result = sync_gmail_labels(fetcher, discovery)
         self.assertEqual(result.created, [])
         self.assertEqual(fetcher.created_calls, [])
 
     def test_orfes_no_es_creen_ni_esborren(self):
-        discovery = VaultDiscovery(active={'Seguiment/Joan': Path('/x')})
-        fetcher = _FakeGmailFetcher(existing_labels=['Seguiment/Joan', 'Etiqueta vella'])
+        discovery = VaultDiscovery(active={'Joan': Path('/x')})
+        fetcher = _FakeGmailFetcher(existing_labels=['Joan', 'Etiqueta vella'])
         result = sync_gmail_labels(fetcher, discovery)
         self.assertEqual(result.created, [])
         self.assertEqual(result.orphan, ['Etiqueta vella'])
@@ -401,12 +443,12 @@ class TestSyncGmailLabels(unittest.TestCase):
 
     def test_tancades_es_marquen_a_part(self):
         discovery = VaultDiscovery(
-            active={'Seguiment/Actiu': Path('/a')},
-            closed_by_active_label={'Seguiment/Antic': Path('/closed/antic')},
+            active={'Actiu': Path('/a')},
+            closed_by_active_label={'Antic': Path('/closed/antic')},
         )
-        fetcher = _FakeGmailFetcher(existing_labels=['Seguiment/Actiu', 'Seguiment/Antic'])
+        fetcher = _FakeGmailFetcher(existing_labels=['Actiu', 'Antic'])
         result = sync_gmail_labels(fetcher, discovery)
-        self.assertEqual(result.closed, ['Seguiment/Antic'])
+        self.assertEqual(result.closed, ['Antic'])
         self.assertEqual(result.orphan, [])
 
     def test_errors_de_creacio_es_capturen(self):
@@ -424,6 +466,64 @@ class TestSyncGmailLabels(unittest.TestCase):
         msgs = []
         sync_gmail_labels(fetcher, discovery, log=msgs.append)
         self.assertTrue(any('Nova' in m for m in msgs))
+
+
+class TestPlanLabelMigration(unittest.TestCase):
+    @staticmethod
+    def _labels(*names):
+        return [{'id': f'L{i}', 'name': n} for i, n in enumerate(names)]
+
+    def test_renames_path_labels_to_leaf(self):
+        d = VaultDiscovery(active={'CRA': Path('/x'), 'Microchip': Path('/y')})
+        existing = self._labels('Seguiment/CRA', 'Proveïdors/ARROW/Microchip')
+        plan = plan_label_migration(existing, d)
+        renames = {(old, new) for _id, old, new in plan.renames}
+        self.assertEqual(renames, {
+            ('Seguiment/CRA', 'CRA'),
+            ('Proveïdors/ARROW/Microchip', 'Microchip'),
+        })
+
+    def test_leaf_labels_left_unchanged(self):
+        # Una etiqueta ja en forma de fulla no es toca.
+        d = VaultDiscovery(active={'CRA': Path('/x')})
+        plan = plan_label_migration(self._labels('CRA'), d)
+        self.assertEqual(plan.renames, [])
+
+    def test_leaf_not_in_vault_is_reported(self):
+        d = VaultDiscovery(active={'CRA': Path('/x')})
+        plan = plan_label_migration(self._labels('Seguiment/Antic'), d)
+        self.assertEqual(plan.renames, [])
+        self.assertIn('Seguiment/Antic', plan.not_in_vault)
+
+    def test_skips_when_flat_target_exists(self):
+        # Ja hi ha 'CRA' plana i 'Seguiment/CRA' antiga: no es renombra
+        # (crearia un duplicat); cal fusionar a mà.
+        d = VaultDiscovery(active={'CRA': Path('/x')})
+        plan = plan_label_migration(self._labels('CRA', 'Seguiment/CRA'), d)
+        self.assertEqual(plan.renames, [])
+        self.assertIn('Seguiment/CRA', plan.skipped_target_exists)
+
+    def test_skips_collision_between_two_path_labels(self):
+        # Dues etiquetes antigues mapegen a la mateixa fulla 'CRA'.
+        d = VaultDiscovery(active={'CRA': Path('/x')})
+        existing = self._labels('Seguiment/CRA', 'Reunions vàries/CRA')
+        plan = plan_label_migration(existing, d)
+        self.assertEqual(plan.renames, [])
+        self.assertEqual(
+            sorted(plan.skipped_collision),
+            ['Reunions vàries/CRA', 'Seguiment/CRA'],
+        )
+
+    def test_closed_series_leaf_is_migrated(self):
+        d = VaultDiscovery(
+            active={},
+            closed_by_active_label={'A10Pro': Path('/closed/a10')},
+        )
+        plan = plan_label_migration(self._labels('Seguiment/A10Pro'), d)
+        self.assertEqual(
+            [(old, new) for _id, old, new in plan.renames],
+            [('Seguiment/A10Pro', 'A10Pro')],
+        )
 
 
 if __name__ == "__main__":

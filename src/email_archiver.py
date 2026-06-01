@@ -42,6 +42,11 @@ PROCESSED_STORE_REL = 'zConfig/.processed_threads.json'
 # (sense reunions) i altres reunions sense voler arxivar correus.
 SERIES_SUBFOLDER_MARKER = 'Correus'
 
+# Subcarpetes estructurals d'una sèrie que mai són sèries pròpies. Es salten
+# en recórrer el vault buscant sèries niu (e.g. dins de Proveïdors/ARROW/ no
+# volem que Reunions/ o Fitxers/ comptin com a sub-sèries).
+NON_SERIES_SUBFOLDERS = {'zConfig', 'Reunions', SERIES_SUBFOLDER_MARKER, 'Fitxers'}
+
 
 def _is_series_folder(path: Path) -> bool:
     return (path / SERIES_SUBFOLDER_MARKER).is_dir()
@@ -51,14 +56,25 @@ def _is_series_folder(path: Path) -> bool:
 class VaultDiscovery:
     """Resultat d'escanejar el vault.
 
-    - `active`: { etiqueta → directori destí } per a sèries actives.
+    Les etiquetes Gmail són el **nom de fulla** de la sèrie (e.g. `CRA`,
+    `Microchip`), no el camí complet. Així l'etiqueta és invariant quan la
+    sèrie es trasllada entre top-levels (Seguiment → Projectes → Reunions
+    vàries → tancades). Conseqüència: els noms de fulla han de ser únics al
+    vault; les col·lisions s'avisen a `warnings` i només es conserva la
+    primera ocurrència.
+
+    - `active`: { etiqueta_fulla → directori destí } per a sèries actives.
       Aquestes són les etiquetes que han d'existir a Gmail.
-    - `closed_by_active_label`: { 'Seguiment/<X>' → directori tancat } per
+    - `closed_by_active_label`: { etiqueta_fulla → directori tancat } per
       capturar correus tardans d'etiquetes encara presents a Gmail però
       la sèrie ja és a `Temes seguiment tancats/`.
+    - `top_level`: { etiqueta_fulla → top-level } per resoldre la prioritat
+      de dispatch (l'etiqueta ja no conté el top-level). Les tancades es
+      mapegen a 'Seguiment'.
     """
     active: dict[str, Path] = field(default_factory=dict)
     closed_by_active_label: dict[str, Path] = field(default_factory=dict)
+    top_level: dict[str, str] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
 
 
@@ -77,30 +93,37 @@ def _is_template(name: str) -> bool:
     return name.startswith('x')
 
 
-def _walk_series(top_level_dir: Path, label_prefix: str) -> list[tuple[str, Path]]:
-    """Recorre `top_level_dir` recursivament i retorna (etiqueta, path) per a
-    cada directori que contingui el marcador `SERIES_SUBFOLDER_MARKER` (`Correus/`).
+def _walk_series(directory: Path) -> list[tuple[str, Path]]:
+    """Recorre `directory` recursivament i retorna (nom_fulla, path) per a cada
+    directori que contingui el marcador `SERIES_SUBFOLDER_MARKER` (`Correus/`).
 
-    Salta x* i zConfig. Una vegada una carpeta es considera sèrie, no baixa més
-    (no s'admet niu de sèries).
+    Suporta **niu real**: una carpeta sèrie pot contenir sub-sèries (e.g.
+    `Proveïdors/ARROW/` amb correus propis i `Proveïdors/ARROW/Microchip/`
+    també amb correus). Per això NO s'atura en trobar una sèrie — continua
+    descendint. Salta x*, i les subcarpetes estructurals (`Reunions/`,
+    `Correus/`, `Fitxers/`, `zConfig`) que mai són sèries pròpies.
+
+    L'etiqueta és el **nom de la carpeta fulla**, no el camí.
     """
     found: list[tuple[str, Path]] = []
-    if not top_level_dir.exists():
+    if not directory.exists():
         return found
-    for child in sorted(top_level_dir.iterdir()):
-        if not child.is_dir() or _is_template(child.name) or child.name == 'zConfig':
+    for child in sorted(directory.iterdir()):
+        if (not child.is_dir() or _is_template(child.name)
+                or child.name in NON_SERIES_SUBFOLDERS):
             continue
-        rel = child.relative_to(top_level_dir).as_posix()
-        label = f"{label_prefix}/{rel}"
         if _is_series_folder(child):
-            found.append((label, child))
-        else:
-            found.extend(_walk_series(child, label))
+            found.append((child.name, child))
+        # Descendim sempre: una sèrie pot contenir sub-sèries.
+        found.extend(_walk_series(child))
     return found
 
 
 def discover_vault_series(vault_path: Path | str, include_sincro: bool = False) -> VaultDiscovery:
     """Descobreix totes les sèries del vault a `Reunions/`.
+
+    L'etiqueta de cada sèrie és el seu nom de fulla (vegeu `VaultDiscovery`).
+    Detecta col·lisions de nom entre top-levels diferents i les avisa.
 
     Args:
         vault_path: arrel del vault d'Obsidian.
@@ -119,19 +142,24 @@ def discover_vault_series(vault_path: Path | str, include_sincro: bool = False) 
     for top in sorted(reunions_root.iterdir()):
         if not top.is_dir() or _is_template(top.name) or top.name in excluded:
             continue
-        for label, path in _walk_series(top, top.name):
-            discovery.active[label] = path
-
-    # Tancades: les indexem per l'etiqueta *activa* esperada perquè el cas
-    # tardà arriba amb 'Seguiment/<X>' (mai amb 'Temes seguiment tancats/<X>').
-    closed_root = reunions_root / SERIES_TOP_LEVEL_CLOSED
-    if closed_root.exists():
-        for child in sorted(closed_root.iterdir()):
-            if not child.is_dir() or _is_template(child.name):
+        for leaf, path in _walk_series(top):
+            if leaf in discovery.active:
+                discovery.warnings.append(
+                    f"Col·lisió d'etiqueta '{leaf}': ja existeix a "
+                    f"{discovery.active[leaf]}, s'ignora {path}"
+                )
                 continue
-            if _is_series_folder(child):
-                active_label = f"Seguiment/{child.name}"
-                discovery.closed_by_active_label[active_label] = child
+            discovery.active[leaf] = path
+            discovery.top_level[leaf] = top.name
+
+    # Tancades: les indexem per l'etiqueta de fulla esperada. Com que
+    # l'etiqueta és invariant al trasllat, el correu tardà arriba amb el
+    # mateix nom de fulla que tindria activa. Es mapegen a 'Seguiment' per a
+    # la prioritat de dispatch (origen conceptual de les tancades).
+    closed_root = reunions_root / SERIES_TOP_LEVEL_CLOSED
+    for leaf, path in _walk_series(closed_root):
+        discovery.closed_by_active_label[leaf] = path
+        discovery.top_level.setdefault(leaf, 'Seguiment')
 
     return discovery
 
@@ -154,7 +182,8 @@ def pick_destination(thread_label_names: list[str], discovery: VaultDiscovery) -
         )
 
     def priority_of(label: str) -> int:
-        top = label.split('/', 1)[0]
+        # L'etiqueta ja no conté el top-level: el resolem via discovery.
+        top = discovery.top_level.get(label, '')
         try:
             return DISPATCH_PRIORITY.index(top)
         except ValueError:
@@ -307,6 +336,66 @@ class LabelSyncResult:
     failed: list[tuple[str, str]] = field(default_factory=list)  # (etiqueta, error)
     orphan: list[str] = field(default_factory=list)              # a Gmail, no al vault
     closed: list[str] = field(default_factory=list)              # sèrie tancada
+
+
+@dataclass
+class LabelMigrationPlan:
+    """Pla de migració d'etiquetes Gmail del format antic (camí complet, e.g.
+    `Seguiment/CRA`) al nou (nom de fulla, e.g. `CRA`).
+
+    - `renames`: (label_id, nom_antic, nom_nou) a renombrar (conserva fils).
+    - `skipped_target_exists`: noms antics que NO es renombren perquè ja
+      existeix una etiqueta plana amb el nom de fulla (cal fusionar a mà).
+    - `skipped_collision`: noms antics que comparteixen nom de fulla entre
+      ells (no es pot decidir quin guanya; resolució manual).
+    - `not_in_vault`: etiquetes amb '/' la fulla de les quals no correspon a
+      cap sèrie actual del vault (es deixen tal qual; informatiu).
+    """
+    renames: list[tuple[str, str, str]] = field(default_factory=list)
+    skipped_target_exists: list[str] = field(default_factory=list)
+    skipped_collision: list[str] = field(default_factory=list)
+    not_in_vault: list[str] = field(default_factory=list)
+
+
+def plan_label_migration(existing_labels: list[dict], discovery: VaultDiscovery) -> LabelMigrationPlan:
+    """Calcula el pla per migrar etiquetes Gmail antigues (amb '/') a nom de fulla.
+
+    Args:
+        existing_labels: [{'id', 'name'}, ...] tal com retorna
+            `GmailFetcher.list_user_labels()`.
+        discovery: sèries del vault (les etiquetes esperades són els noms de
+            fulla d'`active` i `closed_by_active_label`).
+
+    Una etiqueta antiga `A/B/C` es renombra a `C` només si `C` és una sèrie
+    esperada del vault, no hi ha ja una etiqueta plana `C`, i cap altra
+    etiqueta antiga mapeja també a `C`.
+    """
+    expected = set(discovery.active) | set(discovery.closed_by_active_label)
+    existing_names = {l['name'] for l in existing_labels}
+    plan = LabelMigrationPlan()
+
+    by_leaf: dict[str, list[tuple[str, str]]] = {}
+    for l in existing_labels:
+        name = l['name']
+        if '/' not in name:
+            continue  # ja és forma de fulla
+        leaf = name.rsplit('/', 1)[-1]
+        if leaf not in expected:
+            plan.not_in_vault.append(name)
+            continue
+        by_leaf.setdefault(leaf, []).append((l['id'], name))
+
+    for leaf, items in sorted(by_leaf.items()):
+        if len(items) > 1:
+            plan.skipped_collision.extend(sorted(n for _, n in items))
+            continue
+        label_id, old_name = items[0]
+        if leaf in existing_names:
+            plan.skipped_target_exists.append(old_name)
+            continue
+        plan.renames.append((label_id, old_name, leaf))
+
+    return plan
 
 
 def sync_gmail_labels(fetcher, discovery: VaultDiscovery, log=None) -> LabelSyncResult:
