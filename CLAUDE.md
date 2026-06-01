@@ -51,9 +51,15 @@ Reunions/
       Correus/                            # marcador d'opt-in per al sync d'etiquetes Gmail (pot quedar buida)
       Fitxers/                            # opcional, per a documentació adjunta
       semantic_memory.json                # memòria semàntica per sèrie
+      <Sub-sèrie>/                         # opcional: sèrie niu amb el seu propi Reunions/, Correus/, Fitxers/
+        ...                               # (e.g. Proveïdors/ARROW/Microchip/)
   zConfig/
     Vocabulari.md                         # vocabulari unificat: termes + aliases en sublistes + secció "## Configuració"
 ```
+
+**Sèries niu**: una sèrie pot contenir sub-sèries amb contingut propi (e.g. `Proveïdors/ARROW/` amb reunions/correus **i** `Proveïdors/ARROW/Microchip/` també amb els seus). Tant l'arbre de destí del wizard de transcripcions com el descobriment de sèries per a correus (`discover_vault_series`) descendeixen per trobar-les. L'etiqueta Gmail de cada sèrie és sempre el seu **nom de fulla** (vegeu "Wizard Correus").
+
+**Cicle de vida d'una sèrie**: un tema neix a `Seguiment/` i, quan es deixa de seguir reunió a reunió, es trasllada a `Projectes/`, `Reunions vàries/` o `Temes seguiment tancats/`. L'etiqueta Gmail (nom de fulla) **no canvia** amb el trasllat.
 
 **Nom dels fitxers `<Any> <Subfolder>.md`**: el `<Subfolder>` s'obté de `series_name_for_file()` (vegeu `obsidian_writer.py`) — substitueix `_` per espais i treu claudàtors. E.g. `Reunions/Seguiment/Arnau Prunell/2026 Arnau Prunell.md`. Si una reunió és de 2025, el fitxer destí és `2025 <Subfolder>.md` (l'any ve del prefix YYMMDD de la nota, no de la data actual).
 
@@ -82,14 +88,16 @@ Google Calendar OAuth (credentials a `config/`). `_parse_event(event)` retorna `
 **`gmail_fetcher.py` — `GmailFetcher`**
 Embolcall sobre l'API Gmail (OAuth compartit amb Calendar):
 - `list_user_labels()` / `create_label(name)` — gestió d'etiquetes user (idempotent).
+- `rename_label(label_id, new_name)` — renombra una etiqueta via `labels().patch` conservant el seu ID (i per tant totes les assignacions de fils). Scope `gmail.labels`. L'usa l'script de migració d'etiquetes (vegeu sota).
 - `list_thread_ids_for_day(target_day)` — IDs de fils amb missatges del dia indicat (`after:Y/M/D before:Y/M/(D+1)`, paginat).
 - `peek_thread(id, labels_index)` — crida `format=minimal` per saber `{label_names, message_count}` sense baixar bodies. Indispensable per al check d'idempotència abans d'un fetch complet.
 - `fetch_thread_full(id, labels_index)` — fil sencer amb tots els missatges (ordenats cronològicament), headers parsejats, `body_text` (text/plain → tal qual; només HTML → conversió amb `html2text` si està disponible) i adjunts descarregats en binari.
 - Filtrat d'adjunts inline (`is_inline_attachment`): es descarten parts amb MIME `image/*` + `Content-Disposition: inline` + `Content-ID` present. Heurística per evitar guardar logos de signatura, icones Outlook i imatges embebudes al cos HTML. Els documents reals (PDF, .docx, .xlsx, .zip, ...) i les imatges adjuntades explícitament com a `attachment` passen el filtre.
 
 **`email_archiver.py`** — Lògica pura per a l'arxivat (sense Qt ni Gmail):
-- `discover_vault_series(vault_path, include_sincro=False) -> VaultDiscovery` — escaneja `Reunions/` i retorna `active = {etiqueta → Path}` per a qualsevol top-level que contingui sèries. Una carpeta és sèrie **si i només si conté `Correus/`** (`SERIES_SUBFOLDER_MARKER`). És un opt-in explícit: l'usuari crea `Correus/` (pot quedar buida) per declarar que aquesta sèrie ha de rebre etiqueta a Gmail i acceptar arxivat de correus. Sèries que només tenen `Reunions/` (e.g. reunions internes sense intercanvi de correus) **no** generen etiqueta. Excloses sempre: `zConfig` i `Temes seguiment tancats` (tractament dedicat). Exclosa per defecte: `Sincronització` (opt-in via flag). Salta `x*` (plantilles). Detecta sèries niu (e.g. `Proveïdors/ARROW/Microchip`). També retorna `closed_by_active_label = {'Seguiment/X' → Path}` per a sèries de `Temes seguiment tancats/` (indexades per l'etiqueta *activa* esperada per detectar correus tardans; també requereixen `Correus/`).
-- `pick_destination(label_names, discovery) -> DispatchResult` — primary per prioritat `Projectes > Proveïdors > Seguiment > Reunions vàries`. Si la primary és tancada, `is_closed=True` + warning. Les altres etiquetes vault del fil van a `extra_labels`.
+- `discover_vault_series(vault_path, include_sincro=False) -> VaultDiscovery` — escaneja `Reunions/` i retorna `active = {etiqueta → Path}` per a qualsevol top-level que contingui sèries. Una carpeta és sèrie **si i només si conté `Correus/`** (`SERIES_SUBFOLDER_MARKER`). És un opt-in explícit: l'usuari crea `Correus/` (pot quedar buida) per declarar que aquesta sèrie ha de rebre etiqueta a Gmail i acceptar arxivat de correus. Sèries que només tenen `Reunions/` (e.g. reunions internes sense intercanvi de correus) **no** generen etiqueta. Excloses sempre: `zConfig` i `Temes seguiment tancats` (tractament dedicat). Exclosa per defecte: `Sincronització` (opt-in via flag). Salta `x*` (plantilles). **L'etiqueta és el nom de fulla de la sèrie** (e.g. `CRA`, `Microchip`), no el camí complet — així és invariant quan la sèrie es trasllada entre top-levels (vegeu "Wizard Correus"). Conseqüència: els noms de fulla han de ser **únics** al vault; les col·lisions s'avisen a `discovery.warnings` i només es conserva la primera (per ordre alfabètic del top-level). **Niu real**: una sèrie pot contenir sub-sèries amb contingut propi (e.g. `Proveïdors/ARROW/` amb `Correus/` propi **i** `Proveïdors/ARROW/Microchip/` també amb `Correus/`) — `_walk_series` no s'atura en trobar una sèrie, continua descendint (salta les subcarpetes estructurals `NON_SERIES_SUBFOLDERS = {Reunions, Correus, Fitxers, zConfig}`). `discovery.top_level = {etiqueta → top-level}` desa el top-level de cada sèrie per resoldre la prioritat de dispatch (l'etiqueta ja no el conté). També retorna `closed_by_active_label = {etiqueta_fulla → Path}` per a sèries de `Temes seguiment tancats/` (mapejades a `top_level='Seguiment'`; també requereixen `Correus/`).
+- `pick_destination(label_names, discovery) -> DispatchResult` — primary per prioritat `Projectes > Proveïdors > Seguiment > Reunions vàries`. La prioritat es deriva de `discovery.top_level[label]` (no de l'string de l'etiqueta, que ja no conté el top-level). Si la primary és tancada, `is_closed=True` + warning. Les altres etiquetes vault del fil van a `extra_labels`.
+- `plan_label_migration(existing_labels, discovery) -> LabelMigrationPlan` — lògica pura per migrar etiquetes Gmail del format antic (camí complet `Seguiment/CRA`) al nou (fulla `CRA`). Retorna `renames` [(id, antic, nou)], `skipped_target_exists` (ja existeix la plana → fusió manual), `skipped_collision` (dues antigues → mateixa fulla) i `not_in_vault`. La fa servir l'script one-shot `migrate_gmail_labels.py` (arrel): dry-run per defecte, `--apply` per executar, `--include-sincro` opcional.
 - `normalize_subject(subject, max_len=60)` — treu Re:/Fwd:/Fw:/Rv:/Rep: repetits, sanitza chars de path, retalla, espais → `_`.
 - `place_attachment(files_dir, date_prefix, name, data)` — desa un adjunt idempotentment: si existeix amb bytes idèntics, reusa el path; si col·lisió amb contingut diferent, afegeix sufix `_2`, `_3`, …
 - `load_processed_store / save_processed_store / needs_archive / mark_archived` — JSON d'idempotència a `<vault>/zConfig/.processed_threads.json`. `needs_archive` retorna True si el fil és nou o si `message_count` ha crescut.
@@ -213,7 +221,7 @@ Llegeix el `Vocabulari.md` unificat (termes principals + aliases en sublistes in
 
 1. **PairingView** (pàg. 0) — selector de data, càrrega paral·lela de `CalendarWorker` + `PlaudListWorker`, auto-match, ajustament manual. Plaud és l'esquerra, Calendar la dreta.
 2. **En clicar Endavant**: es construeix la cua `work_queue = pairs + orphan_recordings_seleccionades` (l'usuari marca explícitament a la taula Plaud les gravacions sense reunió que vol migrar). Reunions sense gravació es descarten sempre — no hi ha àudio. Comença la iteració.
-3. Per cada item de la cua, **pàg. 1** mostra "Element X de Y — Títol" + arbre de carpetes. Per a una gravació orfe, el títol és el nom de Plaud directament (no s'altera). El tree mostra com a **seleccionables** només les carpetes que contenen una subcarpeta `Reunions/`; la resta apareixen en gris com a contenidors organitzatius. No es descendeix dins una carpeta amb `Reunions/` (és destinació final).
+3. Per cada item de la cua, **pàg. 1** mostra "Element X de Y — Títol" + arbre de carpetes. Per a una gravació orfe, el títol és el nom de Plaud directament (no s'altera). El tree mostra com a **seleccionables** les carpetes que contenen una subcarpeta `Reunions/`; la resta apareixen en gris com a contenidors organitzatius. **Suporta niu real**: una carpeta amb `Reunions/` és seleccionable **i** alhora es descendeix per exposar sub-sèries (e.g. ARROW seleccionable + Microchip a dins). Es poden les branques que ni són sèrie ni en contenen cap (`Correus/`, `Fitxers/`) via `_has_series_descendant`. No es navega dins de `Reunions/` (és la destinació final).
 4. **Pàg. 2**: títol del item + barra de progrés mentre `PlaudTranscriptWorker` descarrega. Quan acaba, l'editor s'omple amb la transcripció (timestamps + parlants). L'usuari pot editar abans de desar.
 5. **Desar** → `obsidian.create_simple_note(meeting_dict, text, target_dir)`. Per a parells `Pair`, `meeting_dict = pair.event`. Per a `PlaudRecording` orfes, es fabrica `{title: rec.name, start: rec.start_at, end: start+duration, attendees: []}`. Després s'avança automàticament al següent item.
 6. Quan la cua és buida, la finestra es tanca (sense diàleg final).
@@ -251,7 +259,7 @@ Llegeix el `Vocabulari.md` unificat (termes principals + aliases en sublistes in
 
 ## Tests
 
-Tests unitaris a `tests/` amb `unittest` (sense pytest). Cobreixen entre altres: `plaud_client.py` (parsing del CLI + gestió d'errors), `meeting_recording_matcher.py` (scoring + assignament), `series_name_for_file`, `ObsidianWriter.append_to_year_note`, `StateFileUpdater.update` (updates a `Temes oberts.md` + retorn del bloc del resum de la reunió per al fitxer anual), `_default_option_for_path` (mapeig path → opció del selector), `email_archiver` (discover sèries vault, dispatcher amb prioritat i cas tancat, normalització d'assumpte, idempotència d'adjunts via `place_attachment`, store JSON) i `ObsidianWriter.create_email_thread_note` (frontmatter, multi-missatge amb `(resposta)`, enllaços a adjunts, regeneració sense duplicar).
+Tests unitaris a `tests/` amb `unittest` (sense pytest). Cobreixen entre altres: `plaud_client.py` (parsing del CLI + gestió d'errors), `meeting_recording_matcher.py` (scoring + assignament), `series_name_for_file`, `ObsidianWriter.append_to_year_note`, `StateFileUpdater.update` (updates a `Temes oberts.md` + retorn del bloc del resum de la reunió per al fitxer anual), `_default_option_for_path` (mapeig path → opció del selector), `email_archiver` (discover sèries vault amb etiqueta de fulla + niu real + col·lisions, dispatcher amb prioritat derivada del top-level i cas tancat, `plan_label_migration`, normalització d'assumpte, idempotència d'adjunts via `place_attachment`, store JSON) i `ObsidianWriter.create_email_thread_note` (frontmatter, multi-missatge amb `(resposta)`, enllaços a adjunts, regeneració sense duplicar).
 
 ```bash
 uv run python -m unittest discover -s tests
@@ -265,16 +273,18 @@ uv run python -m unittest discover -s tests
 
 **Objectiu**: arxivar fils de Gmail al vault segons etiquetes user. Vault = source of truth de la jerarquia. Tot està pensat per **idempotència**: pots executar-lo cada dia sense duplicacions ni pèrdues.
 
-**Convenció d'etiquetes Gmail**: planes amb `/` per a niu (que Gmail interpreta natiu). Una etiqueta per sèrie del vault:
-- `Seguiment/<Persona>`
-- `Projectes/<Projecte>`
-- `Proveïdors/<Proveïdor>` o `Proveïdors/<Categoria>/<Marca>` per a sèries niu (e.g. `Proveïdors/ARROW/Microchip`)
-- `Reunions vàries/<X>`
-- (Opcional) `Sincronització/<X>` si `EMAIL_INCLUDE_SINCRO=true` al `.env`.
+**Convenció d'etiquetes Gmail**: **nom de fulla de la sèrie**, pla (sense `/`). Una etiqueta per sèrie del vault, anomenada com la carpeta fulla:
+- `<Persona>` (sèrie a `Seguiment/`)
+- `<Projecte>` (sèrie a `Projectes/`)
+- `<Proveïdor>` / `<Marca>` (sèries a `Proveïdors/`, també les niu com `Proveïdors/ARROW/Microchip` → etiqueta `Microchip`; ARROW amb contingut propi → `ARROW`)
+- `<X>` (sèrie a `Reunions vàries/`)
+- (Opcional) sèries de `Sincronització/` si `EMAIL_INCLUDE_SINCRO=true` al `.env`.
+
+**Per què nom de fulla i no camí**: una sèrie viatja entre top-levels al llarg de la seva vida (`Seguiment/` → `Projectes/` o `Reunions vàries/` → `Temes seguiment tancats/`). L'etiqueta de fulla és **invariant** a aquests trasllats, així els fils històrics segueixen lligats a la sèrie. Requereix que els noms de fulla siguin únics al vault (les col·lisions s'avisen; vegeu `discover_vault_series`). **Migració del format antic** (`Seguiment/X` → `X`): script one-shot `migrate_gmail_labels.py` (dry-run per defecte, `--apply` per executar). Renombra via `rename_label`, conservant les assignacions de fils.
 
 **Sync vault → Gmail**: a l'inici de cada execució, `EmailArchiveWorker` compara `discover_vault_series(...)` amb `list_user_labels()`. Crea les que falten. Avisa de les òrfenes per consola/log, **no esborra mai**.
 
-**Cas especial — sèrie tancada**: una sèrie traslladada a `Temes seguiment tancats/X/` no genera etiqueta nova (les etiquetes són sempre `Seguiment/X`). `discover_vault_series` indexa aquestes carpetes per la seva *etiqueta activa esperada* (`Seguiment/X`). Si un correu arriba amb aquesta etiqueta i la sèrie ja és tancada:
+**Cas especial — sèrie tancada**: una sèrie traslladada a `Temes seguiment tancats/X/` conserva la mateixa etiqueta de fulla (`X`) que tenia activa — l'etiqueta és invariant al trasllat. `discover_vault_series` indexa aquestes carpetes a `closed_by_active_label[X]`. Si un correu arriba amb l'etiqueta `X` i la sèrie ja és tancada:
 1. `pick_destination` retorna `dest = .../Temes seguiment tancats/X/`, `is_closed=True` i un warning.
 2. La nota i adjunts s'arxiven igualment a la carpeta tancada (no es perd informació).
 3. El log emet `[TANCADA]` al costat del fil i el `summary['sync_closed_warnings']` recorda a l'usuari que pot esborrar manualment l'etiqueta a Gmail.
