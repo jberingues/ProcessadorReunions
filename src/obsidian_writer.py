@@ -106,12 +106,36 @@ class ObsidianWriter:
 
         return year_note
 
-    def create_simple_note(self, meeting: dict, transcripcio: str, target_dir) -> bool:
-        from pathlib import Path
-        target_dir = Path(target_dir)
+    def _note_stem(self, meeting: dict) -> str:
+        """Stem del fitxer d'una nota de reunió: 'YYMMDD_<títol net>'.
+
+        Compartit entre `create_simple_note` (on escriu) i `find_existing_note`
+        (on comprova si ja existeix) perquè el nom es calculi en un sol lloc.
+        """
         data = meeting['start'].strftime('%y%m%d')
-        nom_fitxer = self._clean(meeting['title'])
-        path = target_dir / f"{data}_{nom_fitxer}.md"
+        return f"{data}_{self._clean(meeting['title'])}"
+
+    def find_existing_note(self, meeting: dict, target_dir) -> "Path | None":
+        """Retorna la nota ja existent per a aquesta reunió a `target_dir`, o None.
+
+        Considera els tres sufixos d'estat (sense sufix / '~' corregida /
+        '*' processada) perquè un re-import no creï un duplicat: sense aquesta
+        comprovació, re-desar una reunió ja corregida (`YYMMDD_Títol~.md`)
+        escriuria un `YYMMDD_Títol.md` nou al costat.
+        """
+        if not meeting.get('start'):
+            return None
+        target_dir = Path(target_dir)
+        stem = self._note_stem(meeting)
+        for suffix in ('', '~', '*'):
+            candidate = target_dir / f"{stem}{suffix}.md"
+            if candidate.exists():
+                return candidate
+        return None
+
+    def create_simple_note(self, meeting: dict, transcripcio: str, target_dir) -> bool:
+        target_dir = Path(target_dir)
+        path = target_dir / f"{self._note_stem(meeting)}.md"
         try:
             target_dir.mkdir(parents=True, exist_ok=True)
             path.write_text(self._gen_content(meeting, transcripcio), encoding='utf-8')

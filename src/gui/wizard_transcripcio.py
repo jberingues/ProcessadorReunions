@@ -264,6 +264,9 @@ class WizardTranscripcio(QDialog):
             'title': rec.name,
             'start': start,
             'end': end,
+            # _gen_content requereix 'duration' (str d'un timedelta, com a
+            # _parse_event). Sense això, create_simple_note fallava per a orfes.
+            'duration': str(end - start) if (start and end) else '',
             'attendees': [],
         }
 
@@ -287,12 +290,54 @@ class WizardTranscripcio(QDialog):
         elif idx == 1:
             if self.selected_target_dir is None:
                 return
+            if not self._confirm_if_note_exists():
+                return
             self.stack.setCurrentIndex(2)
             self._update_nav()
         elif idx == 2:
             if not self.transcript_editor.get_text() or self._transcript_loading():
                 return
             self._save_current()
+
+    def _confirm_if_note_exists(self) -> bool:
+        """Protecció contra re-imports duplicats: si ja existeix una nota per a
+        l'element actual a la carpeta triada, demana confirmació.
+
+        Retorna True si cal continuar (no existeix, o l'usuari vol importar
+        igualment). Retorna False si l'usuari decideix ometre — en aquest cas
+        ja s'ha avançat al següent element.
+        """
+        meeting = self._item_meeting_dict(self.current_item)
+        existing = self.obsidian.find_existing_note(meeting, self.selected_target_dir)
+        if existing is None:
+            return True
+
+        name = existing.name
+        if name.endswith('~.md'):
+            estat = 'ja corregida'
+        elif name.endswith('*.md'):
+            estat = 'ja processada'
+        else:
+            estat = 'sense corregir'
+
+        msg = QMessageBox(self)
+        msg.setIcon(QMessageBox.Icon.Warning)
+        msg.setWindowTitle("Nota ja existent")
+        msg.setText(
+            f"Ja existeix una nota per a aquesta reunió a la carpeta destí:\n\n"
+            f"    {name}  ({estat})\n\n"
+            "Si la importes igualment i la nota existent està corregida o "
+            "processada, es crearà un DUPLICAT sense corregir (perquè el nom "
+            "difereix pel sufix). Si està sense corregir, se sobreescriurà."
+        )
+        btn_skip = msg.addButton("Ometre aquest element", QMessageBox.ButtonRole.RejectRole)
+        msg.addButton("Importar igualment", QMessageBox.ButtonRole.AcceptRole)
+        msg.setDefaultButton(btn_skip)
+        msg.exec()
+        if msg.clickedButton() is btn_skip:
+            self._advance_to_next_item()
+            return False
+        return True
 
     def _start_iteration(self):
         pairs, _unmatched_events, _unmatched_recs = self.pairing_view.get_state()
