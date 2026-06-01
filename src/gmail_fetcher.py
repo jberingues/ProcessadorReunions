@@ -30,22 +30,21 @@ def _headers_to_dict(part: dict) -> dict[str, str]:
 def is_inline_attachment(headers_lower: dict[str, str], mime: str) -> bool:
     """Heurística per detectar adjunts inline (logos de firma, icones HTML, etc.).
 
-    Filtra quan totes tres condicions es donen:
+    Filtra quan es donen totes dues condicions:
     - MIME type és image/*
-    - Content-Disposition és `inline`
-    - Hi ha Content-ID (la imatge és referenciada des del HTML del cos)
+    - Hi ha Content-ID (la imatge és referenciada des del cos HTML)
 
-    Els documents reals (PDFs, .docx, .xlsx, .zip, ...) o imatges adjuntades
-    de manera explícita pel remitent no compleixen els 3 alhora.
+    El `Content-ID` és el senyal fiable: indica que la imatge va embeguda al
+    cos (signatura, logo, icona social), no que sigui un adjunt real. **No**
+    es mira el `Content-Disposition`: en reenviar un correu, el client sovint
+    canvia la disposició d'aquestes imatges de `inline` a `attachment` (o la
+    treu), i exigir `inline` les deixava colar (vegeu thread de signatura EBV
+    reenviada). Els documents reals (PDFs, .docx, .xlsx, .zip, ...) no tenen
+    Content-ID; les imatges adjuntades explícitament tampoc.
     """
     if not mime.startswith('image/'):
         return False
-    disposition = (headers_lower.get('content-disposition') or '').strip().lower()
-    if not disposition.startswith('inline'):
-        return False
-    if 'content-id' not in headers_lower:
-        return False
-    return True
+    return 'content-id' in headers_lower
 
 
 class GmailFetcher:

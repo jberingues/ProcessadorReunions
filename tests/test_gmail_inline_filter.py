@@ -64,6 +64,26 @@ class TestIsInlineAttachment(unittest.TestCase):
         }
         self.assertTrue(is_inline_attachment(headers, 'image/png'))
 
+    def test_forwarded_signature_image_with_cid_but_attachment_disposition(self):
+        # Regressió: en reenviar, una imatge de signatura conserva el
+        # Content-ID però la disposició passa a 'attachment'. Abans colava;
+        # ara es filtra perquè el senyal fiable és el Content-ID.
+        headers = {
+            'content-type': 'image/jpeg; name="image001.jpg"',
+            'content-disposition': 'attachment; filename="image001.jpg"',
+            'content-id': '<image001.jpg@01DBF592.B38AA5C0>',
+        }
+        self.assertTrue(is_inline_attachment(headers, 'image/jpeg'))
+
+    def test_image_cid_without_any_disposition_is_filtered(self):
+        # Imatge amb Content-ID i sense Content-Disposition (reenviament que
+        # treu la disposició) → es filtra.
+        headers = {
+            'content-type': 'image/png',
+            'content-id': '<image002.png@01DBF592.B38AA5C0>',
+        }
+        self.assertTrue(is_inline_attachment(headers, 'image/png'))
+
 
 if __name__ == "__main__":
     unittest.main()
