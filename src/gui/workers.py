@@ -1,4 +1,7 @@
 import os
+import errno
+import socket
+import time
 import logging
 import litellm
 from datetime import datetime, timedelta
@@ -11,6 +14,47 @@ from plaud_client import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Errors de xarxa transitoris pels quals val la pena reintentar (el socket
+# falla en obrir-se però la xarxa torna a estar disponible al cap d'un instant).
+# EADDRNOTAVAIL (49 a macOS) = "Can't assign requested address", típic quan
+# l'app arrenca mentre la xarxa/VPN encara s'estabilitza.
+_TRANSIENT_ERRNOS = {
+    errno.EADDRNOTAVAIL,   # 49 a macOS
+    errno.ECONNRESET,
+    errno.ECONNREFUSED,
+    errno.ETIMEDOUT,
+    errno.ENETUNREACH,
+    errno.ENETDOWN,
+    errno.EHOSTUNREACH,
+}
+
+
+def _is_transient_network_error(exc: BaseException) -> bool:
+    """True si l'excepció sembla un hipo de xarxa transitori (per retry)."""
+    if isinstance(exc, (socket.timeout, ConnectionError)):
+        return True
+    if isinstance(exc, OSError) and exc.errno in _TRANSIENT_ERRNOS:
+        return True
+    return False
+
+
+def _retry_on_network_error(fn, *, attempts=3, base_delay=0.6):
+    """Executa fn() reintentant fins a `attempts` cops davant errors de xarxa
+    transitoris, amb backoff lineal. Re-llança l'última excepció si s'esgoten
+    els intents o si l'error no és transitori."""
+    for attempt in range(1, attempts + 1):
+        try:
+            return fn()
+        except Exception as e:  # noqa: BLE001 — filtrem per tipus a sota
+            if attempt >= attempts or not _is_transient_network_error(e):
+                raise
+            delay = base_delay * attempt
+            logger.warning(
+                "Error de xarxa transitori (%s), reintent %d/%d en %.1fs",
+                e, attempt, attempts, delay,
+            )
+            time.sleep(delay)
 
 
 class CalendarWorker(QThread):
@@ -29,13 +73,15 @@ class CalendarWorker(QThread):
             time_min = self.date_from if self.date_from else now - timedelta(days=7)
             time_max = (self.date_to if self.date_to else now).replace(hour=23, minute=59, second=59)
 
-            events = self.calendar.service.events().list(
-                calendarId='primary',
-                timeMin=time_min.isoformat() + 'Z',
-                timeMax=time_max.isoformat() + 'Z',
-                singleEvents=True,
-                orderBy='startTime'
-            ).execute().get('items', [])
+            events = _retry_on_network_error(
+                lambda: self.calendar.service.events().list(
+                    calendarId='primary',
+                    timeMin=time_min.isoformat() + 'Z',
+                    timeMax=time_max.isoformat() + 'Z',
+                    singleEvents=True,
+                    orderBy='startTime'
+                ).execute()
+            ).get('items', [])
 
             reunions = [self.calendar._parse_event(e) for e in events if 'attendees' in e]
             self.finished.emit(reunions)
@@ -175,7 +221,11 @@ class GmailLabelSyncWorker(QThread):
                 f"{len(discovery.closed_by_active_label)} tancades."
             )
             self.log.emit("Sincronitzant etiquetes amb Gmail...")
-            result = sync_gmail_labels(self.fetcher, discovery, log=lambda m: self.log.emit(f"  {m}"))
+            result = _retry_on_network_error(
+                lambda: sync_gmail_labels(
+                    self.fetcher, discovery, log=lambda m: self.log.emit(f"  {m}")
+                )
+            )
             self.finished.emit(result)
         except Exception as e:
             logger.exception("GmailLabelSyncWorker error")
@@ -243,15 +293,24 @@ class EmailArchiveWorker(QThread):
         )
 
         self.log.emit("Sincronitzant etiquetes amb Gmail...")
-        sync = sync_gmail_labels(self.fetcher, discovery, log=lambda m: self.log.emit(f"  {m}"))
+        sync = _retry_on_network_error(
+            lambda: sync_gmail_labels(
+                self.fetcher, discovery, log=lambda m: self.log.emit(f"  {m}")
+            )
+        )
         summary['sync_created_labels'] = sync.created
         summary['sync_orphan_labels'] = sync.orphan
         summary['sync_closed_warnings'] = sync.closed
 
-        labels_index = {l['id']: l['name'] for l in self.fetcher.list_user_labels()}
+        labels_index = {
+            l['id']: l['name']
+            for l in _retry_on_network_error(self.fetcher.list_user_labels)
+        }
 
         self.log.emit(f"Cercant fils del dia {self.target_day.strftime('%Y-%m-%d')}...")
-        thread_ids = self.fetcher.list_thread_ids_for_day(self.target_day)
+        thread_ids = _retry_on_network_error(
+            lambda: self.fetcher.list_thread_ids_for_day(self.target_day)
+        )
         total = len(thread_ids)
         self.log.emit(f"Trobats {total} fils.")
 
