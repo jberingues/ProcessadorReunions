@@ -247,14 +247,15 @@ class EmailArchiveWorker(QThread):
     finished = Signal(dict)
     error = Signal(str)
 
-    def __init__(self, fetcher, obsidian, vault_path, target_day,
+    def __init__(self, fetcher, obsidian, vault_path, start_day, end_day,
                  include_sincro: bool, parent=None):
         super().__init__(parent)
         self.fetcher = fetcher
         self.obsidian = obsidian
         from pathlib import Path as _P
         self.vault_path = _P(vault_path)
-        self.target_day = target_day
+        self.start_day = start_day
+        self.end_day = end_day
         self.include_sincro = include_sincro
         self._abort = False
 
@@ -307,9 +308,12 @@ class EmailArchiveWorker(QThread):
             for l in _retry_on_network_error(self.fetcher.list_user_labels)
         }
 
-        self.log.emit(f"Cercant fils del dia {self.target_day.strftime('%Y-%m-%d')}...")
+        self.log.emit(
+            f"Cercant fils de {self.start_day.strftime('%Y-%m-%d')} "
+            f"a {self.end_day.strftime('%Y-%m-%d')}..."
+        )
         thread_ids = _retry_on_network_error(
-            lambda: self.fetcher.list_thread_ids_for_day(self.target_day)
+            lambda: self.fetcher.list_thread_ids_for_range(self.start_day, self.end_day)
         )
         total = len(thread_ids)
         self.log.emit(f"Trobats {total} fils.")

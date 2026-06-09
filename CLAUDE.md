@@ -133,12 +133,13 @@ Resum funcional; per a signatures exactes llegeix el mòdul. Es destaquen només
 - **Dispatcher**: múltiples etiquetes vault → prioritat `Projectes > Proveïdors > Seguiment > Reunions vàries`. Primary → `labels:`; resta → `tags:`; no-vault s'ignoren.
 - **Idempotència** (`<vault>/zConfig/.processed_threads.json`, `{thread_id: {message_count, archived_at, dest_path}}`): `peek_thread` abans del full; si `message_count` no ha crescut, salta; si ha crescut → `fetch_thread_full` + regenera nota sencera (adjunts amb bytes idèntics es reusen).
 - **Format nota** (`<dest>/Correus/YYMMDD_<assumpte>.md`): frontmatter `type:correu, thread_id, data, assumpte, labels:[primary], tags:[extras]`; una secció `## YYYY-MM-DD HH:MM — Nom <email>` per missatge (`(resposta)` des del 2n); adjunts a `Fitxers/` amb wikilinks. Data = primer missatge.
-- **UI 2 pàgines**: selector d'un dia (default avui) → log live + barra + resum. "Aturar" avorta entre fils (no desfà). Log a `data/email_archive_<ts>.log`.
+- **Finestra de dies**: l'arxivat processa un **rang** `[dia_final − (dies−1), dia_final]` (ambdós inclusius). `gmail_fetcher.build_date_range_query(start, end)` construeix `after:start before:end+1` (`before` exclusiu a Gmail); `list_thread_ids_for_range` el consulta (un fil amb missatges en diversos dies del rang apareix un sol cop). `list_thread_ids_for_day` delega al de rang. `EmailArchiveWorker` rep `start_day`/`end_day`.
+- **UI 2 pàgines**: selector "fins al dia" (default avui) + spinbox "dies enrere" (default **7**, rang 1–90) → log live + barra + resum. "Aturar" avorta entre fils (no desfà). Log a `data/email_archive_<ts>.log`.
 - **Què NO fa**: no esborra correus ni etiquetes a Gmail, no toca `semantic_memory.json`/`Vocabulari.md`, no mou/renombra carpetes (només crea `Correus/`/`Fitxers/`).
 - **Gotchas operatius**:
-  - **Model d'un dia** (`after:D before:D+1`): si oblides un dia X, els fils *només* d'aquell dia no es processen a futur (no hi ha sweep enrere). Workaround: re-llança amb `target_day=X`.
+  - **Model de finestra** (default 7 dies): no hi ha sweep enrere il·limitat — un fil amb missatges *únicament* fora de la finestra no es processa. Amb 7 dies, n'hi ha prou amb executar-ho un cop per setmana; si has estat fora més temps, amplia "dies enrere" (o mou el "fins al dia") per cobrir el buit. La idempotència (`peek_thread` + store) fa que re-cobrir dies ja arxivats sigui barat i sense duplicats.
   - **Correus enviats**: inclosos si formen part d'un fil etiquetat. Per arxivar un enviat solo, aplica l'etiqueta manualment a Gmail.
-  - **Forçar re-arxivat**: esborra l'entrada a `.processed_threads.json` i re-executa per la data del fil.
+  - **Forçar re-arxivat**: esborra l'entrada a `.processed_threads.json` i re-executa amb una finestra que cobreixi la data del fil.
   - **Inline-attachment**: descarta `image/* + Content-ID`. Si trobes adjunts útils descartats o logos colats, mira el Content-ID al missatge font abans d'ajustar `is_inline_attachment`.
 
 ## Wizard Correccio — Flux

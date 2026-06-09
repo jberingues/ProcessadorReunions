@@ -1,23 +1,28 @@
 """Wizard d'arxivat de correus al vault d'Obsidian.
 
 Flux:
- 1. Pàgina 0 (Configuració): triar el dia a arxivar i confirmar.
+ 1. Pàgina 0 (Configuració): triar el dia final i quants dies enrere
+    arxivar (finestra [dia_final - dies + 1, dia_final]), i confirmar.
  2. Pàgina 1 (Execució): worker que sync etiquetes + arxiva fils;
     log live + barra de progrés. Al final, resum amb llistes d'avisos.
+
+Els fils ja arxivats sense missatges nous es salten via el store
+d'idempotència (`zConfig/.processed_threads.json`), de manera que ampliar
+la finestra no re-baixa res ja processat.
 
 El flag `EMAIL_INCLUDE_SINCRO=true` al `.env` inclou les sèries de
 `Reunions/Sincronització/` (per defecte excloses).
 """
 import logging
 import os
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from PySide6.QtCore import QDate, Qt
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QStackedWidget, QWidget,
     QPushButton, QLabel, QProgressBar, QDateEdit, QPlainTextEdit,
-    QMessageBox,
+    QMessageBox, QSpinBox,
 )
 
 from workers import EmailArchiveWorker
@@ -97,14 +102,25 @@ class WizardCorreus(QDialog):
         page.addSpacing(20)
 
         date_row = QHBoxLayout()
-        date_row.addWidget(QLabel("Arxivar correus del dia:"))
+        date_row.addWidget(QLabel("Arxivar fins al dia:"))
         self.date_day = QDateEdit()
         self.date_day.setCalendarPopup(True)
         self.date_day.setDate(QDate.currentDate())
         self.date_day.setDisplayFormat("dd/MM/yyyy")
         date_row.addWidget(self.date_day)
+        date_row.addSpacing(20)
+        date_row.addWidget(QLabel("Dies enrere:"))
+        self.spin_days = QSpinBox()
+        self.spin_days.setRange(1, 90)
+        self.spin_days.setValue(7)
+        date_row.addWidget(self.spin_days)
         date_row.addStretch()
         page.addLayout(date_row)
+        page.addSpacing(6)
+        page.addWidget(QLabel(
+            "<i>Es processaran els fils amb missatges dins la finestra. "
+            "Els fils ja arxivats sense canvis es salten automàticament.</i>"
+        ))
 
         page.addSpacing(12)
         sincro_text = (
@@ -198,12 +214,13 @@ class WizardCorreus(QDialog):
 
     def _start_archive(self):
         qd = self.date_day.date()
-        target_day = date(qd.year(), qd.month(), qd.day())
+        end_day = date(qd.year(), qd.month(), qd.day())
+        start_day = end_day - timedelta(days=self.spin_days.value() - 1)
 
         self.log_path = _setup_file_log()
         logger.info(
-            "Iniciant arxivat: target_day=%s include_sincro=%s log=%s",
-            target_day.isoformat(), self.include_sincro, self.log_path,
+            "Iniciant arxivat: rang=%s..%s include_sincro=%s log=%s",
+            start_day.isoformat(), end_day.isoformat(), self.include_sincro, self.log_path,
         )
 
         self.log_view.appendPlainText(f"Log: {self.log_path}")
@@ -213,7 +230,7 @@ class WizardCorreus(QDialog):
 
         self.worker = EmailArchiveWorker(
             self.gmail_fetcher, self.obsidian,
-            self.obsidian.vault, target_day, self.include_sincro,
+            self.obsidian.vault, start_day, end_day, self.include_sincro,
             parent=self,
         )
         self.worker.log.connect(self._on_log)

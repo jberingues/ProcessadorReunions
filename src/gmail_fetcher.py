@@ -27,6 +27,21 @@ def _headers_to_dict(part: dict) -> dict[str, str]:
     return {h['name'].lower(): h['value'] for h in part.get('headers', [])}
 
 
+def build_date_range_query(start_day: date, end_day: date) -> str:
+    """Construeix la query Gmail per al rang [start_day, end_day] (ambdós inclusius).
+
+    Gmail interpreta `after:` com a inclusiu i `before:` com a exclusiu, per
+    això el `before` és `end_day + 1 dia`.
+    """
+    if isinstance(start_day, datetime):
+        start_day = start_day.date()
+    if isinstance(end_day, datetime):
+        end_day = end_day.date()
+    before = end_day + timedelta(days=1)
+    return (f"after:{start_day.strftime('%Y/%m/%d')} "
+            f"before:{before.strftime('%Y/%m/%d')}")
+
+
 def is_inline_attachment(headers_lower: dict[str, str], mime: str) -> bool:
     """Heurística per detectar adjunts inline (logos de firma, icones HTML, etc.).
 
@@ -84,17 +99,13 @@ class GmailFetcher:
 
     # --- Cerca de fils ---
 
-    def list_thread_ids_for_day(self, target_day: date) -> list[str]:
-        """IDs de fils amb missatges del dia `target_day` (rang [day, day+1d)).
+    def list_thread_ids_for_range(self, start_day: date, end_day: date) -> list[str]:
+        """IDs de fils amb missatges dins el rang [start_day, end_day] (ambdós inclusius).
 
-        Usa la query Gmail `after:Y/M/D before:Y/M/D` (after inclusiu,
-        before exclusiu segons els operadors de cerca de Gmail).
+        Un fil amb missatges en diversos dies del rang apareix una sola
+        vegada (threads().list deduplica per fil).
         """
-        if isinstance(target_day, datetime):
-            target_day = target_day.date()
-        next_day = target_day + timedelta(days=1)
-        q = (f"after:{target_day.strftime('%Y/%m/%d')} "
-             f"before:{next_day.strftime('%Y/%m/%d')}")
+        q = build_date_range_query(start_day, end_day)
         ids: list[str] = []
         page_token = None
         while True:
@@ -106,6 +117,12 @@ class GmailFetcher:
             if not page_token:
                 break
         return ids
+
+    def list_thread_ids_for_day(self, target_day: date) -> list[str]:
+        """IDs de fils amb missatges del dia `target_day`. Delega a `list_thread_ids_for_range`."""
+        if isinstance(target_day, datetime):
+            target_day = target_day.date()
+        return self.list_thread_ids_for_range(target_day, target_day)
 
     def peek_thread(self, thread_id: str, labels_index: dict[str, str]) -> dict:
         """Crida minimal: retorna {label_names, message_count} sense baixar bodies."""
