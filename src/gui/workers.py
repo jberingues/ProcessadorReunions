@@ -453,13 +453,13 @@ class PlaudListWorker(QThread):
 
     def run(self):
         try:
-            recordings = self.client.list_for_date(self.target_date)
-            total = len(recordings)
-            self.progress.emit(0, total)
-            for i, rec in enumerate(recordings, start=1):
-                if rec.start_at is None:
-                    rec.start_at = self.client.get_start_at_utc(rec.file_id)
-                self.progress.emit(i, total)
+            # `list_for_date` resol `start_at` de cada candidat (la part lenta)
+            # i emet progrés via el callback; les gravacions retornades ja duen
+            # `start_at` poblat, així que no cal un segon bucle de fetch.
+            recordings = self.client.list_for_date(
+                self.target_date,
+                progress_cb=lambda fets, total: self.progress.emit(fets, total),
+            )
             self.finished.emit(recordings)
         except PlaudNotAuthenticated:
             self.not_authenticated.emit()

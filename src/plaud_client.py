@@ -186,11 +186,22 @@ class PlaudClient:
         except (PlaudNotAuthenticated, PlaudCLINotInstalled, PlaudError):
             return False
 
-    def list_for_date(self, target_date: date) -> list[PlaudRecording]:
-        """Llista totes les gravacions amb data == target_date.
+    def list_for_date(self, target_date: date, progress_cb=None) -> list[PlaudRecording]:
+        """Llista les gravacions el `start_at` (hora local) de les quals == target_date.
 
-        Utilitza `plaud today` per al dia actual i `plaud recent` per a dies
-        anteriors. La data del CLI és la data local del dispositiu.
+        **Important**: la data que mostra el llistat del CLI (`plaud today` /
+        `plaud recent`) és la de **pujada al cloud (`created_at`)**, NO la de
+        gravació. Una gravació feta avui però sincronitzada demà apareix sota
+        la data de demà. Per això resolem `start_at` de cada candidat i filtrem
+        per la seva data **local** (`start_at` és UTC → `.astimezone()`).
+
+        La finestra es consulta amb un dia extra de marge (`days_ago + 2`)
+        perquè una gravació feta a `target_date` sempre té `created_at` ≥
+        `target_date`, i el marge cobreix el cas de la franja de mitjanit.
+
+        `progress_cb(fets, total)` s'invoca per cada candidat resolt (la part
+        lenta), perquè el worker pugui mostrar el progrés sense un doble fetch:
+        `start_at` queda poblat als objectes retornats.
         """
         today = datetime.now().date()
         days_ago = (today - target_date).days
@@ -199,9 +210,24 @@ class PlaudClient:
         if days_ago == 0:
             out = self._run(["today"])
         else:
-            out = self._run(["recent", "-d", str(days_ago + 1)])
-        target_iso = target_date.isoformat()
-        return [r for r in parse_list_output(out) if r.date == target_iso]
+            out = self._run(["recent", "-d", str(days_ago + 2)])
+        candidates = parse_list_output(out)
+        total = len(candidates)
+        result: list[PlaudRecording] = []
+        for i, rec in enumerate(candidates, start=1):
+            if rec.start_at is None:
+                rec.start_at = self.get_start_at_utc(rec.file_id)
+            if progress_cb is not None:
+                progress_cb(i, total)
+            if rec.start_at is not None:
+                matches = rec.start_at.astimezone().date() == target_date
+            else:
+                # Sense start_at no podem saber la data real: fem servir la del
+                # CLI com a fallback (comportament antic) per no amagar res.
+                matches = rec.date == target_date.isoformat()
+            if matches:
+                result.append(rec)
+        return result
 
     def get_file_metadata(self, file_id: str) -> dict[str, str]:
         return parse_file_output(self._run(["file", file_id]))

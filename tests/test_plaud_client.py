@@ -208,6 +208,8 @@ class TestPlaudClientHighLevel(unittest.TestCase):
 
     @patch("plaud_client.subprocess.run")
     def test_list_for_date_today_filtra(self, mock_run):
+        # SAMPLE_TODAY no parseja com a `file`, així que get_start_at_utc retorna
+        # None i el filtre cau al fallback de data del CLI (comportament antic).
         mock_run.return_value = MagicMock(returncode=0, stdout=SAMPLE_TODAY, stderr="")
         with patch("plaud_client.datetime") as mock_dt:
             mock_dt.now.return_value.date.return_value = date(2026, 5, 18)
@@ -219,6 +221,51 @@ class TestPlaudClientHighLevel(unittest.TestCase):
             recs = PlaudClient().list_for_date(date(2026, 5, 17))
         # No s'ha filtrat cap fila amb 2026-05-17 al sample
         self.assertEqual(len(recs), 0)
+
+    @patch("plaud_client.subprocess.run")
+    def test_list_for_date_filtra_per_start_at_no_per_pujada(self, mock_run):
+        # Gravació feta el 06-08 (start_at migdia UTC → data local 06-08 a
+        # qualsevol fus) però pujada el 06-09 (el CLI la llista sota 06-09).
+        list_out = (
+            "- Fetching recordings...\n"
+            "\n"
+            "Recordings in the last 3 days: 1\n"
+            "\n"
+            "  b3be3d80c14f254502eca31d1e4a337f  06-08 Reunió tard  2026-06-09  3h04m\n"
+            "\n"
+        )
+        file_out = (
+            "File Details:\n"
+            "  id:           b3be3d80c14f254502eca31d1e4a337f\n"
+            "  name:         06-08 Reunió tard\n"
+            "  created_at:   2026-06-09T13:05:40\n"
+            "  start_at:     2026-06-08T12:00:00\n"
+            "  duration:     3h04m\n"
+        )
+        # 1a crida = llistat; següents = `file <id>`.
+        def side_effect(args, **kwargs):
+            is_file = "file" in args
+            return MagicMock(
+                returncode=0,
+                stdout=file_out if is_file else list_out,
+                stderr="",
+            )
+        mock_run.side_effect = side_effect
+
+        # Carregant el 06-08 SÍ ha de sortir (filtra per start_at local).
+        with patch("plaud_client.datetime") as mock_dt:
+            mock_dt.now.return_value.date.return_value = date(2026, 6, 9)
+            mock_dt.fromisoformat = datetime.fromisoformat
+            recs = PlaudClient().list_for_date(date(2026, 6, 8))
+        self.assertEqual([r.file_id for r in recs], ["b3be3d80c14f254502eca31d1e4a337f"])
+        self.assertIsNotNone(recs[0].start_at)  # queda poblat per al matcher
+
+        # Carregant el 06-09 (la data de pujada) NO ha de sortir.
+        with patch("plaud_client.datetime") as mock_dt:
+            mock_dt.now.return_value.date.return_value = date(2026, 6, 9)
+            mock_dt.fromisoformat = datetime.fromisoformat
+            recs = PlaudClient().list_for_date(date(2026, 6, 9))
+        self.assertEqual(recs, [])
 
 
 if __name__ == "__main__":
