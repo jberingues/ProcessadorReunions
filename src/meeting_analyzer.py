@@ -185,3 +185,67 @@ def format_ordre_del_dia(result: MeetingAnalysisResult, all_topics: list[str], d
         lines.append(f"{i}) {t}")
 
     return '\n'.join(lines) + '\n'
+
+
+def parse_ordre_del_dia(text: str) -> MeetingAnalysisResult:
+    """Invers de format_ordre_del_dia: reconstrueix el MeetingAnalysisResult a
+    partir d'un fitxer 'Ordre del dia propera reunió.md' (possiblement editat a
+    mà per l'usuari durant la validació).
+
+    Llegeix només la secció 'Resum de la reunió anterior' (els temes tractats i
+    els 'Altres temes'); ignora la llista 'Ordre del dia propera reunió:' final,
+    que és l'agenda de temes oberts i ja viu a Temes oberts.md.
+
+    Tolera edicions lleugeres (text dels resums modificat, espais). Si l'usuari
+    canvia el NOM d'un tema, deixarà de coincidir amb la capçalera de Temes
+    oberts i el bullet no s'hi inserirà (però sí anirà al fitxer anual). Si parteix
+    un resum en diverses línies/bullets, es concatenen amb un espai.
+    """
+    updated_topics: list[ActiveTopicUpdate] = []
+    new_other_topics: list[str] = []
+    mode = None  # None | 'topic' | 'altres'
+    current_name: str | None = None
+    current_summary_lines: list[str] = []
+
+    def flush_topic():
+        nonlocal current_name, current_summary_lines
+        if current_name is not None:
+            summary = ' '.join(s for s in current_summary_lines if s)
+            updated_topics.append(
+                ActiveTopicUpdate(topic_name=current_name, summary=summary)
+            )
+        current_name = None
+        current_summary_lines = []
+
+    started = False
+    for line in text.splitlines():
+        if re.match(r'^#{2,6}\s+Resum de la reunió anterior', line):
+            started = True
+            continue
+        if not started:
+            continue
+        if re.match(r'^\s*Ordre del dia propera reunió\s*:', line):
+            break
+        if re.match(r'^#{2,6}\s+\*?\s*Altres temes\s*\*?\s*$', line):
+            flush_topic()
+            mode = 'altres'
+            continue
+        m = re.match(r'^#{2,6}\s+\*?\s*\d+\)\s*(.+?)\s*\*?\s*$', line)
+        if m:
+            flush_topic()
+            mode = 'topic'
+            current_name = m.group(1).strip().rstrip('*').strip()
+            continue
+        stripped = line.strip()
+        if not stripped:
+            continue
+        content = re.sub(r'^[\*\-]\s+', '', stripped)
+        if mode == 'topic':
+            current_summary_lines.append(content)
+        elif mode == 'altres':
+            new_other_topics.append(content)
+
+    flush_topic()
+    return MeetingAnalysisResult(
+        updated_topics=updated_topics, new_other_topics=new_other_topics
+    )

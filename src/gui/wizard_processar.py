@@ -12,24 +12,23 @@ from PySide6.QtWidgets import (
 from vocabulary_loader import VocabularyLoader
 from workers import (
     DailyProcessorWorker,
-    MeetingAnalyzerWorker, SummaryWorker
+    MeetingAnalyzerWorker
 )
 
 
-OPTION_RESUM = "Resum"
 OPTION_RESUM_ORDRE = "Resum+ordre dia"
 OPTION_RESUM_ORDRE_BREU = "Resum+ordre dia (breu)"
 OPTION_SINCRO = "Sincro"
-ALL_OPTIONS = [OPTION_RESUM, OPTION_RESUM_ORDRE, OPTION_RESUM_ORDRE_BREU, OPTION_SINCRO]
+ALL_OPTIONS = [OPTION_RESUM_ORDRE, OPTION_RESUM_ORDRE_BREU, OPTION_SINCRO]
 
 
 def _default_option_for_path(path: Path) -> str:
-    parts = path.parts
-    if 'Sincronització' in parts:
+    # Unificat: tota reunió que no sigui de sincronització rep el tractament
+    # complet (genera Ordre del dia → consolidació posterior a Temes oberts +
+    # fitxer anual). Ja no hi ha l'opció "Resum" simple.
+    if 'Sincronització' in path.parts:
         return OPTION_SINCRO
-    if 'Seguiment' in parts:
-        return OPTION_RESUM_ORDRE
-    return OPTION_RESUM
+    return OPTION_RESUM_ORDRE
 
 
 def _sort_notes_by_date(notes_with_options: list[tuple[dict, str]]) -> list[tuple[dict, str]]:
@@ -42,7 +41,7 @@ def _sort_notes_by_date(notes_with_options: list[tuple[dict, str]]) -> list[tupl
 @dataclass
 class _BatchItem:
     note: dict
-    option: str = OPTION_RESUM
+    option: str = OPTION_RESUM_ORDRE
     status: str = 'pending'  # pending|running|saved|skipped|error
     error_msg: str | None = None
     processing_result: object = None
@@ -176,24 +175,43 @@ class WizardProcessar(QDialog):
     def _validate_pre_flight(self, selected_rows: list[int]) -> list[str]:
         """Retorna llista d'errors (buida si tot OK).
 
-        Per files amb 'Resum+ordre dia' (o variant breu), comprova que existeix
-        Temes oberts.md a la subcarpeta de la sèrie. Si no, l'usuari ha d'entrar
-        els temes manualment abans de processar (decisió explícita per evitar
-        crear un fitxer buit sense criteri editorial).
+        Per files amb 'Resum+ordre dia' (o variant breu), comprova l'invariant
+        "una consolidació pendent per sèrie": com que l'Ordre del dia es
+        sobreescriu a cada fase 1, una sèrie no pot tenir dues reunions pendents
+        de consolidar alhora. Es bloqueja si ja hi ha una nota '+' a la sèrie, o
+        si se n'han seleccionat dues de la mateixa sèrie al mateix lot.
+
+        (El Temes oberts.md ja no es valida aquí: si falta, es crea buit
+        automàticament a la fase 1 via ObsidianWriter.ensure_temes_oberts.)
         """
         errors = []
+        seen_series: dict[Path, dict] = {}
         for r in selected_rows:
             option = self.row_combos[r].currentText()
             if option not in (OPTION_RESUM_ORDRE, OPTION_RESUM_ORDRE_BREU):
                 continue
             note = self.notes[r]
-            temes_path = note['path'].parent.parent / 'Temes oberts.md'
-            if not temes_path.exists():
+            reunions_dir = note['path'].parent
+            series_name = reunions_dir.parent.name
+
+            pending = sorted(reunions_dir.glob('*+.md'))
+            if pending:
                 errors.append(
-                    f"{note['date']} - {note['title']}: "
-                    f"falta {temes_path.parent.name}/Temes oberts.md "
-                    f"(crea'l manualment amb els temes oberts inicials)"
+                    f"{note['date']} - {note['title']}: la sèrie {series_name} "
+                    f"ja té una reunió pendent de consolidar ({pending[0].name}). "
+                    f"Consolida-la primer."
                 )
+
+            if reunions_dir in seen_series:
+                other = seen_series[reunions_dir]
+                errors.append(
+                    f"{note['date']} - {note['title']}: hi ha dues reunions "
+                    f"seleccionades de la sèrie {series_name} "
+                    f"({other['date']} i {note['date']}). Processa'n una, "
+                    f"consolida-la i després l'altra."
+                )
+            else:
+                seen_series[reunions_dir] = note
         return errors
 
     # -- Lògica de batch seqüencial --
@@ -241,8 +259,6 @@ class WizardProcessar(QDialog):
             elif item.option in (OPTION_RESUM_ORDRE, OPTION_RESUM_ORDRE_BREU):
                 brief = (item.option == OPTION_RESUM_ORDRE_BREU)
                 self._batch_start_seguiment(idx, note, transcript, brief)
-            elif item.option == OPTION_RESUM:
-                self._batch_start_resum(idx, transcript)
             else:
                 self._batch_skip(idx, f"Opció desconeguda: {item.option}")
         except Exception as e:
@@ -296,18 +312,16 @@ class WizardProcessar(QDialog):
 
     def _batch_start_seguiment(self, idx, note, transcript, brief: bool):
         item = self.batch_results[idx]
-        temes_path = note['path'].parent.parent / 'Temes oberts.md'
-        # La validació prèvia garanteix que existeix; doble-check defensiu:
-        if not temes_path.exists():
-            self._batch_skip(idx, "Falta Temes oberts.md")
-            return
+        # Si la sèrie no té Temes oberts.md encara, es crea buit (amb '### Altres
+        # temes') automàticament — decisió 2026-06-15: un Temes oberts buit és
+        # vàlid i no val la pena bloquejar per fer-lo crear a mà.
+        temes_path = self.obsidian.ensure_temes_oberts(note['path'].parent.parent)
 
         from meeting_analyzer import MeetingAnalyzer, parse_active_topics
+        # Temes oberts pot estar buit (sèrie sense temes oberts a seguir): en
+        # aquest cas tot el que es tracti anirà a "Altres temes" i l'ordre del
+        # dia surt amb l'agenda buida. No es descarta la reunió.
         topics = parse_active_topics(temes_path)
-
-        if not topics:
-            self._batch_skip(idx, "Temes oberts.md buit")
-            return
 
         item.all_topics = topics
         item.temes_oberts_path = temes_path
@@ -318,16 +332,6 @@ class WizardProcessar(QDialog):
         )
         self.worker_processing.finished.connect(
             lambda r, i=idx: self._batch_on_seguiment_finished(i, r)
-        )
-        self.worker_processing.error.connect(
-            lambda msg, i=idx: self._batch_error(i, msg)
-        )
-        self.worker_processing.start()
-
-    def _batch_start_resum(self, idx, transcript):
-        self.worker_processing = SummaryWorker(transcript, self)
-        self.worker_processing.finished.connect(
-            lambda s, i=idx: self._batch_on_summary_finished(i, s)
         )
         self.worker_processing.error.connect(
             lambda msg, i=idx: self._batch_error(i, msg)
@@ -361,42 +365,22 @@ class WizardProcessar(QDialog):
         self._process_next()
 
     def _batch_on_seguiment_finished(self, idx, processing_result):
+        # Fase 1: escriu NOMÉS l'Ordre del dia propera reunió i marca la nota '+'
+        # (pendent de consolidar). Temes oberts i el fitxer anual NO es toquen
+        # aquí: es propaguen a la fase 2 (Consolidar) a partir de l'Ordre del dia
+        # ja validat manualment per l'usuari, garantint fidelitat.
         item = self.batch_results[idx]
         item.processing_result = processing_result
         try:
-            from meeting_analyzer import StateFileUpdater, format_ordre_del_dia
+            from meeting_analyzer import format_ordre_del_dia
             note = item.note
-
-            updater = StateFileUpdater()
-            meeting_block = updater.update(item.temes_oberts_path, processing_result, note['date'])
-            if meeting_block:
-                attendees = self._format_attendees_string(note['path'])
-                self.obsidian.append_to_year_note(
-                    note['path'], note['date'], note['title'], attendees, meeting_block
-                )
 
             date_obj = datetime.strptime(note['date'], '%y%m%d')
             ordre_path = note['path'].parent.parent / 'Ordre del dia propera reunió.md'
             ordre_content = format_ordre_del_dia(processing_result, item.all_topics, date_obj.strftime('%d/%m/%Y'))
             ordre_path.write_text(ordre_content, encoding='utf-8')
 
-            self.obsidian.mark_as_processed(note['path'])
-            self._batch_mark_done(idx)
-        except Exception as e:
-            self._batch_error(idx, str(e))
-            return
-        self._process_next()
-
-    def _batch_on_summary_finished(self, idx, summary):
-        item = self.batch_results[idx]
-        item.processing_markdown = summary
-        try:
-            note = item.note
-            attendees = self._format_attendees_string(note['path'])
-            self.obsidian.append_to_year_note(
-                note['path'], note['date'], note['title'], attendees, summary
-            )
-            self.obsidian.mark_as_processed(note['path'])
+            self.obsidian.mark_as_ordre_generated(note['path'])
             self._batch_mark_done(idx)
         except Exception as e:
             self._batch_error(idx, str(e))
@@ -480,10 +464,11 @@ class WizardProcessar(QDialog):
             if errors:
                 QMessageBox.warning(
                     self,
-                    "Falten fitxers de temes oberts",
-                    "No es pot continuar perquè falten els fitxers següents:\n\n"
+                    "No es pot continuar",
+                    "Cal resoldre el següent abans de processar:\n\n"
                     + "\n".join(f"• {e}" for e in errors)
-                    + "\n\nCrea els 'Temes oberts.md' manualment o canvia el tipus de processat."
+                    + "\n\nConsolida les reunions pendents (o processa una sola "
+                    "reunió per sèrie en aquest lot)."
                 )
                 return
             self.stack.setCurrentIndex(1)

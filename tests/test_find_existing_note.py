@@ -48,6 +48,11 @@ class TestFindExistingNote(unittest.TestCase):
         p.write_text("x", encoding="utf-8")
         self.assertEqual(self.writer.find_existing_note(self.meeting, self.target), p)
 
+    def test_detects_pending_consolidation_note(self):
+        p = self.target / f"{self._stem()}+.md"
+        p.write_text("x", encoding="utf-8")
+        self.assertEqual(self.writer.find_existing_note(self.meeting, self.target), p)
+
     def test_detects_processed_note(self):
         p = self.target / f"{self._stem()}*.md"
         p.write_text("x", encoding="utf-8")

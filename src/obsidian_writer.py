@@ -1,4 +1,5 @@
 import re
+import yaml
 from pathlib import Path
 
 
@@ -118,16 +119,16 @@ class ObsidianWriter:
     def find_existing_note(self, meeting: dict, target_dir) -> "Path | None":
         """Retorna la nota ja existent per a aquesta reunió a `target_dir`, o None.
 
-        Considera els tres sufixos d'estat (sense sufix / '~' corregida /
-        '*' processada) perquè un re-import no creï un duplicat: sense aquesta
-        comprovació, re-desar una reunió ja corregida (`YYMMDD_Títol~.md`)
-        escriuria un `YYMMDD_Títol.md` nou al costat.
+        Considera els quatre sufixos d'estat (sense sufix / '~' corregida /
+        '+' pendent de consolidar / '*' processada) perquè un re-import no creï
+        un duplicat: sense aquesta comprovació, re-desar una reunió ja corregida
+        (`YYMMDD_Títol~.md`) escriuria un `YYMMDD_Títol.md` nou al costat.
         """
         if not meeting.get('start'):
             return None
         target_dir = Path(target_dir)
         stem = self._note_stem(meeting)
-        for suffix in ('', '~', '*'):
+        for suffix in ('', '~', '+', '*'):
             candidate = target_dir / f"{stem}{suffix}.md"
             if candidate.exists():
                 return candidate
@@ -321,14 +322,17 @@ from: "{thread['from']}"
         return content
 
     def find_uncorrected_notes(self) -> list:
-        """Notes sense ~ ni * (originals, no corregides)."""
+        """Notes sense cap sufix d'estat (originals, no corregides).
+
+        Exclou ~ (corregida), + (pendent de consolidar) i * (processada) perquè
+        una nota ja avançada al cicle no reaparegui al Wizard Correcció."""
         notes = []
         for p in (self.vault / 'Reunions').rglob('*.md'):
             if 'zConfig' in p.parts:
                 continue
             if p.parent.name != 'Reunions':
                 continue
-            if not p.stem.endswith('~') and not p.stem.endswith('*'):
+            if not p.stem.endswith(('~', '+', '*')):
                 parts = p.stem.split('_', 1)
                 date_str = parts[0] if len(parts[0]) == 6 else ''
                 title = parts[1].replace('_', ' ') if len(parts) > 1 else p.stem
@@ -357,6 +361,23 @@ from: "{thread['from']}"
                 notes.append({'path': p, 'title': title, 'date': date_str})
         return sorted(notes, key=lambda n: n['date'], reverse=True)
 
+    def find_pending_consolidation_notes(self) -> list:
+        """Notes amb + al stem (ordre del dia generat a la fase 1, pendents de
+        consolidar a Temes oberts + fitxer anual)."""
+        notes = []
+        for p in (self.vault / 'Reunions').rglob('*.md'):
+            if 'zConfig' in p.parts:
+                continue
+            if p.parent.name != 'Reunions':
+                continue
+            if p.stem.endswith('+'):
+                stem = p.stem[:-1]
+                parts = stem.split('_', 1)
+                date_str = parts[0] if len(parts[0]) == 6 else ''
+                title = parts[1].replace('_', ' ') if len(parts) > 1 else stem
+                notes.append({'path': p, 'title': title, 'date': date_str})
+        return sorted(notes, key=lambda n: n['date'], reverse=True)
+
     def find_unprocessed_notes(self) -> list:
         notes = []
         for p in (self.vault / 'Reunions').rglob('*.md'):
@@ -370,6 +391,39 @@ from: "{thread['from']}"
                 title = parts[1].replace('_', ' ') if len(parts) > 1 else p.stem
                 notes.append({'path': p, 'title': title, 'date': date_str})
         return sorted(notes, key=lambda n: n['date'], reverse=True)
+
+    def ensure_temes_oberts(self, series_dir) -> Path:
+        """Garanteix que existeix <series_dir>/Temes oberts.md. Si falta, el crea
+        buit amb la secció '### Altres temes' (convenció del vault) perquè els
+        temes nous de la consolidació hi tinguin lloc. Idempotent: si ja existeix
+        no el toca. Retorna el path."""
+        path = Path(series_dir) / 'Temes oberts.md'
+        if not path.exists():
+            path.write_text("### Altres temes\n", encoding='utf-8')
+        return path
+
+    def read_attendees_string(self, note_path: Path) -> str:
+        """Llegeix els assistents del frontmatter d'una nota i els retorna com a
+        'Nom1, Nom2'. Resol wikilinks [[Nom]] i cometes. Buit si no n'hi ha."""
+        content = Path(note_path).read_text(encoding='utf-8')
+        if not content.startswith('---'):
+            return ''
+        end = content.find('---', 3)
+        if end == -1:
+            return ''
+        try:
+            frontmatter = yaml.safe_load(content[3:end])
+        except Exception:
+            return ''
+        if not frontmatter or 'attendees' not in frontmatter:
+            return ''
+        names = []
+        for entry in frontmatter['attendees'] or []:
+            name = str(entry).strip().strip('"').strip()
+            if name.startswith('[[') and name.endswith(']]'):
+                name = name[2:-2]
+            names.append(name)
+        return ', '.join(names)
 
     def read_transcript(self, path: Path) -> str:
         content = path.read_text(encoding='utf-8')
@@ -388,9 +442,22 @@ from: "{thread['from']}"
         new_content = content[:idx + len(marker)] + '\n\n' + new_transcript + '\n'
         path.write_text(new_content, encoding='utf-8')
 
-    def mark_as_processed(self, path: Path) -> Path:
+    def mark_as_ordre_generated(self, path: Path) -> Path:
+        """Fase 1 feta: l'ordre del dia s'ha generat i la nota queda pendent de
+        consolidar. Canvia el sufix ~ (corregida) per + (pendent de consolidar);
+        si no té ~, l'afegeix."""
         stem = path.stem
         if stem.endswith('~'):
+            new_stem = stem[:-1] + '+'
+        else:
+            new_stem = stem + '+'
+        new_path = path.with_stem(new_stem)
+        path.rename(new_path)
+        return new_path
+
+    def mark_as_processed(self, path: Path) -> Path:
+        stem = path.stem
+        if stem.endswith(('~', '+')):
             new_stem = stem[:-1] + '*'
         else:
             new_stem = stem + '*'

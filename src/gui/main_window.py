@@ -8,6 +8,7 @@ from plaud_client import PlaudClient
 from wizard_transcripcio import WizardTranscripcio
 from wizard_correccio import WizardCorreccio
 from wizard_processar import WizardProcessar
+from wizard_consolidar import WizardConsolidar
 from wizard_processar_correus import WizardProcessarCorreus
 from wizard_nou_projecte import WizardNouProjecte
 from wizard_correus import WizardCorreus
@@ -76,6 +77,12 @@ class MainWindow(QMainWindow):
         self.btn_processar.clicked.connect(self._open_processar)
         layout.addWidget(self.btn_processar)
 
+        self.btn_consolidar = QPushButton("Consolidar reunions")
+        self.btn_consolidar.setMinimumHeight(50)
+        self.btn_consolidar.setStyleSheet("font-size: 14px;")
+        self.btn_consolidar.clicked.connect(self._open_consolidar)
+        layout.addWidget(self.btn_consolidar)
+
         self.btn_processar_correus = QPushButton("Processar correus")
         self.btn_processar_correus.setMinimumHeight(50)
         self.btn_processar_correus.setStyleSheet("font-size: 14px;")
@@ -88,7 +95,7 @@ class MainWindow(QMainWindow):
         self.btn_nou_projecte.clicked.connect(self._open_nou_projecte)
         layout.addWidget(self.btn_nou_projecte)
 
-        self._all_buttons = [self.btn_transcripcions, self.btn_correus, self.btn_sync_labels, self.btn_fitxers, self.btn_correccio, self.btn_processar, self.btn_processar_correus, self.btn_nou_projecte]
+        self._all_buttons = [self.btn_transcripcions, self.btn_correus, self.btn_sync_labels, self.btn_fitxers, self.btn_correccio, self.btn_processar, self.btn_consolidar, self.btn_processar_correus, self.btn_nou_projecte]
 
     def _open_transcripcions(self):
         self._disable_all()
@@ -99,6 +106,12 @@ class MainWindow(QMainWindow):
     def _open_processar(self):
         self._disable_all()
         wizard = WizardProcessar(self.calendar, self.obsidian, self)
+        wizard.finished.connect(self._wizard_closed)
+        wizard.open()
+
+    def _open_consolidar(self):
+        self._disable_all()
+        wizard = WizardConsolidar(self.obsidian, self)
         wizard.finished.connect(self._wizard_closed)
         wizard.open()
 
