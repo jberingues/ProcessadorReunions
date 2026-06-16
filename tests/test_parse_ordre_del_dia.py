@@ -14,6 +14,8 @@ from meeting_analyzer import (
     ActiveTopicUpdate,
     format_ordre_del_dia,
     parse_ordre_del_dia,
+    with_pending_marker,
+    strip_pending_marker,
 )
 
 
@@ -99,6 +101,41 @@ class TestParseOrdreDelDia(unittest.TestCase):
         text = format_ordre_del_dia(result, ["Tema (v2)"], "01/01/2026")
         parsed = parse_ordre_del_dia(text)
         self.assertEqual(parsed.updated_topics[0].topic_name, "Tema (v2)")
+
+
+class TestPendingMarker(unittest.TestCase):
+    def _ordre(self):
+        result = MeetingAnalysisResult(
+            updated_topics=[ActiveTopicUpdate(topic_name="Tema A", summary="Resum.")],
+            new_other_topics=[],
+        )
+        return format_ordre_del_dia(result, ["Tema A"], "01/01/2026")
+
+    def test_marker_added_as_frontmatter(self):
+        marked = with_pending_marker(self._ordre())
+        self.assertTrue(marked.startswith("---\npendent_revisio: true\n---\n"))
+
+    def test_parse_ignores_marker(self):
+        marked = with_pending_marker(self._ordre())
+        parsed = parse_ordre_del_dia(marked)
+        self.assertEqual([t.topic_name for t in parsed.updated_topics], ["Tema A"])
+
+    def test_strip_removes_marker_and_frontmatter(self):
+        marked = with_pending_marker(self._ordre())
+        stripped = strip_pending_marker(marked)
+        self.assertEqual(stripped, self._ordre())
+        self.assertNotIn("pendent_revisio", stripped)
+
+    def test_strip_idempotent_when_no_marker(self):
+        plain = self._ordre()
+        self.assertEqual(strip_pending_marker(plain), plain)
+
+    def test_strip_preserves_other_frontmatter_keys(self):
+        text = "---\npendent_revisio: true\naltrakey: valor\n---\n### cos\n"
+        stripped = strip_pending_marker(text)
+        self.assertNotIn("pendent_revisio", stripped)
+        self.assertIn("altrakey: valor", stripped)
+        self.assertTrue(stripped.startswith("---\n"))
 
 
 if __name__ == "__main__":

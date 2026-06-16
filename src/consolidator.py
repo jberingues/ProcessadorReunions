@@ -1,7 +1,7 @@
 """Fase 2 del processat de reunions de seguiment: consolidació.
 
-La fase 1 (Wizard Processar) genera només 'Ordre del dia propera reunió.md' i
-deixa la nota en estat '+' (pendent de consolidar). L'usuari valida/corregeix
+La fase 1 (Wizard Processar) genera només l'Ordre del dia ('Ordre del dia -
+<sèrie>.md') i deixa la nota en estat '+' (pendent de consolidar). L'usuari valida/corregeix
 l'Ordre del dia a Obsidian. La consolidació pren aquest Ordre del dia ja
 validat, en treu els resums (via parse_ordre_del_dia) i els propaga a:
 
@@ -14,9 +14,8 @@ Lògica pura (sense Qt): rep un ObsidianWriter ja construït.
 """
 from pathlib import Path
 
-from meeting_analyzer import parse_ordre_del_dia, StateFileUpdater
+from meeting_analyzer import parse_ordre_del_dia, strip_pending_marker, StateFileUpdater
 
-ORDRE_FILENAME = 'Ordre del dia propera reunió.md'
 TEMES_FILENAME = 'Temes oberts.md'
 
 
@@ -36,15 +35,16 @@ def consolidate_pending_note(obsidian, note: dict) -> dict:
     """
     note_path = Path(note['path'])
     series_dir = note_path.parent.parent
-    ordre_path = series_dir / ORDRE_FILENAME
+    ordre_path = obsidian.ordre_del_dia_path(series_dir)
     temes_path = series_dir / TEMES_FILENAME
 
     if not ordre_path.exists():
-        raise FileNotFoundError(f"Falta {ORDRE_FILENAME} a {series_dir.name}")
+        raise FileNotFoundError(f"Falta {ordre_path.name} a {series_dir.name}")
     if not temes_path.exists():
         raise FileNotFoundError(f"Falta {TEMES_FILENAME} a {series_dir.name}")
 
-    result = parse_ordre_del_dia(ordre_path.read_text(encoding='utf-8'))
+    ordre_text = ordre_path.read_text(encoding='utf-8')
+    result = parse_ordre_del_dia(ordre_text)
 
     meeting_block = StateFileUpdater().update(temes_path, result, note['date'])
     year_written = False
@@ -54,6 +54,12 @@ def consolidate_pending_note(obsidian, note: dict) -> dict:
             note_path, note['date'], note['title'], attendees, meeting_block
         )
         year_written = True
+
+    # Treu la marca de pendent de revisar de l'Ordre del dia (ja consolidat),
+    # conservant el contingut (incloses les edicions de l'usuari).
+    cleaned = strip_pending_marker(ordre_text)
+    if cleaned != ordre_text:
+        ordre_path.write_text(cleaned, encoding='utf-8')
 
     new_path = obsidian.mark_as_processed(note_path)
     return {'note_path': new_path, 'year_written': year_written, 'block': meeting_block}

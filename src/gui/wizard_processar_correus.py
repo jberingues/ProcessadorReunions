@@ -234,7 +234,7 @@ class WizardProcessarCorreus(QDialog):
         updater.update(self._estat_path, result, note['date'])
 
         date_obj = datetime.strptime(note['date'], '%y%m%d')
-        ordre_path = self._project_dir / 'Ordre del dia propera reunió.md'
+        ordre_path = self.obsidian.ordre_del_dia_path(self._project_dir)
         ordre_content = format_ordre_del_dia(result, self._all_topics, date_obj.strftime('%d/%m/%Y'))
         ordre_path.write_text(ordre_content, encoding='utf-8')
 

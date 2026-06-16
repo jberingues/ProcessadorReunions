@@ -392,6 +392,15 @@ from: "{thread['from']}"
                 notes.append({'path': p, 'title': title, 'date': date_str})
         return sorted(notes, key=lambda n: n['date'], reverse=True)
 
+    def ordre_del_dia_path(self, series_dir) -> Path:
+        """Path de l'Ordre del dia d'una sèrie: 'Ordre del dia - <sèrie>.md'.
+
+        El nom inclou la sèrie (folder) perquè sigui identificable a la cerca
+        d'Obsidian (abans tots es deien igual). Un per sèrie. La sèrie es
+        normalitza amb series_name_for_file (com el fitxer anual)."""
+        series_dir = Path(series_dir)
+        return series_dir / f"Ordre del dia - {series_name_for_file(series_dir.name)}.md"
+
     def ensure_temes_oberts(self, series_dir) -> Path:
         """Garanteix que existeix <series_dir>/Temes oberts.md. Si falta, el crea
         buit amb la secció '### Altres temes' (convenció del vault) perquè els

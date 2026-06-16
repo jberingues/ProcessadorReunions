@@ -372,13 +372,13 @@ class WizardProcessar(QDialog):
         item = self.batch_results[idx]
         item.processing_result = processing_result
         try:
-            from meeting_analyzer import format_ordre_del_dia
+            from meeting_analyzer import format_ordre_del_dia, with_pending_marker
             note = item.note
 
             date_obj = datetime.strptime(note['date'], '%y%m%d')
-            ordre_path = note['path'].parent.parent / 'Ordre del dia propera reunió.md'
+            ordre_path = self.obsidian.ordre_del_dia_path(note['path'].parent.parent)
             ordre_content = format_ordre_del_dia(processing_result, item.all_topics, date_obj.strftime('%d/%m/%Y'))
-            ordre_path.write_text(ordre_content, encoding='utf-8')
+            ordre_path.write_text(with_pending_marker(ordre_content), encoding='utf-8')
 
             self.obsidian.mark_as_ordre_generated(note['path'])
             self._batch_mark_done(idx)

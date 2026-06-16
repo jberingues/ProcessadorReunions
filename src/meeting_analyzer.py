@@ -189,7 +189,7 @@ def format_ordre_del_dia(result: MeetingAnalysisResult, all_topics: list[str], d
 
 def parse_ordre_del_dia(text: str) -> MeetingAnalysisResult:
     """Invers de format_ordre_del_dia: reconstrueix el MeetingAnalysisResult a
-    partir d'un fitxer 'Ordre del dia propera reunió.md' (possiblement editat a
+    partir del fitxer Ordre del dia de la sèrie (possiblement editat a
     mà per l'usuari durant la validació).
 
     Llegeix només la secció 'Resum de la reunió anterior' (els temes tractats i
@@ -249,3 +249,33 @@ def parse_ordre_del_dia(text: str) -> MeetingAnalysisResult:
     return MeetingAnalysisResult(
         updated_topics=updated_topics, new_other_topics=new_other_topics
     )
+
+
+ORDRE_PENDING_KEY = 'pendent_revisio'
+
+
+def with_pending_marker(ordre_content: str) -> str:
+    """Afegeix el frontmatter '<ORDRE_PENDING_KEY>: true' a dalt de l'Ordre del
+    dia (fase 1) perquè sigui cercable a Obsidian com a pendent de revisar
+    (`[pendent_revisio]` al cercador). `parse_ordre_del_dia` ignora el
+    frontmatter (va abans de la capçalera 'Resum')."""
+    return f"---\n{ORDRE_PENDING_KEY}: true\n---\n{ordre_content}"
+
+
+def strip_pending_marker(text: str) -> str:
+    """Treu la clau de pendent de revisar del frontmatter (fase 2), conservant la
+    resta del fitxer (incloses edicions de l'usuari i altres claus). Si el
+    frontmatter queda buit, l'elimina del tot. Idempotent: si no hi ha la marca,
+    retorna el text sense canvis."""
+    m = re.match(r'^---\n(.*?)\n---\n?', text, re.DOTALL)
+    if not m:
+        return text
+    fm_lines = [
+        line for line in m.group(1).splitlines()
+        if not re.match(rf'^\s*{ORDRE_PENDING_KEY}\s*:', line)
+    ]
+    rest = text[m.end():]
+    fm_body = '\n'.join(fm_lines).strip('\n')
+    if not fm_body:
+        return rest
+    return f"---\n{fm_body}\n---\n{rest}"

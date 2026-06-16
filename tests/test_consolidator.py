@@ -14,6 +14,7 @@ from obsidian_writer import ObsidianWriter
 from consolidator import consolidate_pending_note
 from meeting_analyzer import (
     MeetingAnalysisResult, ActiveTopicUpdate, format_ordre_del_dia,
+    with_pending_marker,
 )
 
 
@@ -41,8 +42,13 @@ class TestConsolidator(unittest.TestCase):
             ],
             new_other_topics=["Nou tema de seguretat"],
         )
-        (self.series / "Ordre del dia propera reunió.md").write_text(
-            format_ordre_del_dia(result, ["Migració base de dades", "API REST"], "20/05/2026"),
+        # Com la fase 1 real: l'Ordre del dia porta la marca 'pendent_revisio'
+        # i el nom inclou la sèrie ('Ordre del dia - A10Pro.md').
+        self.ordre = self.writer.ordre_del_dia_path(self.series)
+        self.ordre.write_text(
+            with_pending_marker(
+                format_ordre_del_dia(result, ["Migració base de dades", "API REST"], "20/05/2026")
+            ),
             encoding="utf-8",
         )
 
@@ -81,24 +87,34 @@ class TestConsolidator(unittest.TestCase):
 
     def test_user_edit_propagates(self):
         # L'usuari corregeix un error de transcripció a l'Ordre del dia.
-        ordre = self.series / "Ordre del dia propera reunió.md"
-        text = ordre.read_text(encoding="utf-8").replace(
+        text = self.ordre.read_text(encoding="utf-8").replace(
             "Pendent autenticació.", "Pendent revisar OAuth2."
         )
-        ordre.write_text(text, encoding="utf-8")
+        self.ordre.write_text(text, encoding="utf-8")
         consolidate_pending_note(self.writer, self.note)
         year = (self.series / "2026 A10Pro.md").read_text(encoding="utf-8")
         self.assertIn("Pendent revisar OAuth2.", year)
         self.assertNotIn("Pendent autenticació.", year)
 
+    def test_pending_marker_removed_after_consolidation(self):
+        self.assertIn("pendent_revisio", self.ordre.read_text(encoding="utf-8"))
+        consolidate_pending_note(self.writer, self.note)
+        after = self.ordre.read_text(encoding="utf-8")
+        self.assertNotIn("pendent_revisio", after)
+        # El contingut (resum) es conserva.
+        self.assertIn("Resum de la reunió anterior", after)
+
+    def test_ordre_filename_includes_series(self):
+        self.assertEqual(self.ordre.name, "Ordre del dia - A10Pro.md")
+
     def test_missing_ordre_raises(self):
-        (self.series / "Ordre del dia propera reunió.md").unlink()
+        self.ordre.unlink()
         with self.assertRaises(FileNotFoundError):
             consolidate_pending_note(self.writer, self.note)
 
     def test_empty_result_no_year_note(self):
         # Ordre del dia sense cap tema tractat ni altres → no escriu anual.
-        (self.series / "Ordre del dia propera reunió.md").write_text(
+        self.ordre.write_text(
             "### Resum de la reunió anterior 20/05/2026\n\n"
             "Ordre del dia propera reunió:\n1) Migració base de dades\n",
             encoding="utf-8",
