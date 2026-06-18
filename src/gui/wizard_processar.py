@@ -18,8 +18,14 @@ from workers import (
 
 OPTION_RESUM_ORDRE = "Resum+ordre dia"
 OPTION_RESUM_ORDRE_BREU = "Resum+ordre dia (breu)"
+OPTION_RESUM = "Resum"
 OPTION_SINCRO = "Sincro"
-ALL_OPTIONS = [OPTION_RESUM_ORDRE, OPTION_RESUM_ORDRE_BREU, OPTION_SINCRO]
+ALL_OPTIONS = [OPTION_RESUM_ORDRE, OPTION_RESUM_ORDRE_BREU, OPTION_RESUM, OPTION_SINCRO]
+
+# Opcions que generen un Ordre del dia i deixen la nota '+' (pendent de
+# consolidar). Comparteixen el fitxer 'Ordre del dia - <sèrie>.md' → subjectes a
+# l'invariant "una consolidació pendent per sèrie" (vegeu _validate_pre_flight).
+OPTIONS_PENDING_CONSOLIDATION = (OPTION_RESUM_ORDRE, OPTION_RESUM_ORDRE_BREU, OPTION_RESUM)
 
 
 def _default_option_for_path(path: Path) -> str:
@@ -188,7 +194,7 @@ class WizardProcessar(QDialog):
         seen_series: dict[Path, dict] = {}
         for r in selected_rows:
             option = self.row_combos[r].currentText()
-            if option not in (OPTION_RESUM_ORDRE, OPTION_RESUM_ORDRE_BREU):
+            if option not in OPTIONS_PENDING_CONSOLIDATION:
                 continue
             note = self.notes[r]
             reunions_dir = note['path'].parent
@@ -256,6 +262,8 @@ class WizardProcessar(QDialog):
             transcript = self.obsidian.read_transcript(note['path'])
             if item.option == OPTION_SINCRO:
                 self._batch_start_sincro(idx, note, transcript)
+            elif item.option == OPTION_RESUM:
+                self._batch_start_resum(idx, note, transcript)
             elif item.option in (OPTION_RESUM_ORDRE, OPTION_RESUM_ORDRE_BREU):
                 brief = (item.option == OPTION_RESUM_ORDRE_BREU)
                 self._batch_start_seguiment(idx, note, transcript, brief)
@@ -338,6 +346,23 @@ class WizardProcessar(QDialog):
         )
         self.worker_processing.start()
 
+    def _batch_start_resum(self, idx, note, transcript):
+        # Resum lliure: NO llegeix Temes oberts ni en crea cap (un resum pur no
+        # segueix temes). El LLM detecta els temes pel seu compte (summarize=True).
+        from meeting_analyzer import MeetingAnalyzer
+        analyzer = MeetingAnalyzer()
+
+        self.worker_processing = MeetingAnalyzerWorker(
+            analyzer, [], transcript, self, summarize=True
+        )
+        self.worker_processing.finished.connect(
+            lambda r, i=idx: self._batch_on_resum_finished(i, r)
+        )
+        self.worker_processing.error.connect(
+            lambda msg, i=idx: self._batch_error(i, msg)
+        )
+        self.worker_processing.start()
+
     # -- Callbacks de workers --
 
     def _batch_on_daily_finished(self, idx, processing_result, md_output):
@@ -379,6 +404,30 @@ class WizardProcessar(QDialog):
             ordre_path = self.obsidian.ordre_del_dia_path(note['path'].parent.parent)
             ordre_content = format_ordre_del_dia(processing_result, item.all_topics, date_obj.strftime('%d/%m/%Y'))
             ordre_path.write_text(with_pending_marker(ordre_content), encoding='utf-8')
+
+            self.obsidian.mark_as_ordre_generated(note['path'])
+            self._batch_mark_done(idx)
+        except Exception as e:
+            self._batch_error(idx, str(e))
+            return
+        self._process_next()
+
+    def _batch_on_resum_finished(self, idx, processing_result):
+        # Fase 1 (opció Resum): escriu el resum lliure a l'Ordre del dia amb el
+        # marcador de tipus 'resum' (perquè la fase 2 propagui NOMÉS a l'anual,
+        # sense tocar Temes oberts) i marca la nota '+' (pendent de consolidar).
+        item = self.batch_results[idx]
+        item.processing_result = processing_result
+        try:
+            from meeting_analyzer import format_resum, with_pending_marker
+            note = item.note
+
+            date_obj = datetime.strptime(note['date'], '%y%m%d')
+            ordre_path = self.obsidian.ordre_del_dia_path(note['path'].parent.parent)
+            ordre_content = format_resum(processing_result, date_obj.strftime('%d/%m/%Y'))
+            ordre_path.write_text(
+                with_pending_marker(ordre_content, kind='resum'), encoding='utf-8'
+            )
 
             self.obsidian.mark_as_ordre_generated(note['path'])
             self._batch_mark_done(idx)

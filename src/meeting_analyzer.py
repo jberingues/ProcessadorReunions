@@ -76,6 +76,54 @@ INSTRUCCIONS:
         print("  ✓ Agent analista finalitzat\n")
         return result.pydantic
 
+    def summarize(self, transcript: str, brief: bool = False) -> MeetingAnalysisResult:
+        """Resum lliure d'una reunió: NO parteix d'una llista de temes oberts.
+
+        El LLM detecta pel seu compte els temes principals tractats i en fa un
+        resum cada un. A diferència d'analyze(), no compara amb Temes oberts ni
+        genera agenda — és purament un resum de la reunió. Retorna els temes
+        detectats a updated_topics (new_other_topics queda buit) per reusar el
+        mateix format/parse de l'Ordre del dia.
+        """
+        summary_instruction = (
+            "escriu un resum de màxim 2 línies del que s'ha dit."
+            if brief else
+            "escriu un resum de 3-4 línies del que s'ha dit, incloent decisions preses, estat actual i propers passos si s'han mencionat."
+        )
+
+        agent = Agent(
+            role="Analista de reunions",
+            goal="Resumir una transcripció de reunió tema per tema",
+            backstory="Expert en síntesi de reunions tecnològiques en català.",
+            llm=self.llm,
+            verbose=False
+        )
+
+        task = Task(
+            description=f"""
+Analitza la transcripció d'una reunió i identifica els temes principals que s'hi han tractat.
+
+TRANSCRIPCIÓ:
+{transcript}
+
+INSTRUCCIONS:
+- Identifica els temes principals tractats a la reunió (tu decideixes quins són; no parteixes de cap llista prèvia).
+- Per cada tema, {summary_instruction}
+- Només resumeix el que s'ha dit, no inventis.
+- Posa TOTS els temes a updated_topics: topic_name = nom curt del tema, summary = el resum.
+- Deixa new_other_topics buit.
+""",
+            expected_output="MeetingAnalysisResult amb un tema i resum per cada assumpte tractat",
+            agent=agent,
+            output_pydantic=MeetingAnalysisResult
+        )
+
+        crew = Crew(agents=[agent], tasks=[task], verbose=False)
+        print("  → Agent de resum iniciat...")
+        result = crew.kickoff()
+        print("  ✓ Agent de resum finalitzat\n")
+        return result.pydantic
+
 
 class StateFileUpdater:
     def update(self, temes_oberts_path: Path, result: MeetingAnalysisResult, date_label: str) -> str:
@@ -100,9 +148,9 @@ class StateFileUpdater:
         lines = self._update_other_topics(lines, result.new_other_topics)
 
         Path(temes_oberts_path).write_text('\n'.join(lines) + '\n', encoding='utf-8')
-        return self._format_meeting_block(result)
+        return self.build_year_block(result)
 
-    def _format_meeting_block(self, result: MeetingAnalysisResult) -> str:
+    def build_year_block(self, result: MeetingAnalysisResult) -> str:
         """Construeix el bloc del resum d'aquesta reunió (temes tractats + altres
         temes nous) per ser afegit al fitxer anual."""
         block_lines: list[str] = []
@@ -187,6 +235,27 @@ def format_ordre_del_dia(result: MeetingAnalysisResult, all_topics: list[str], d
     return '\n'.join(lines) + '\n'
 
 
+def format_resum(result: MeetingAnalysisResult, date_str: str) -> str:
+    """Format de l'Ordre del dia per a l'opció 'Resum' (resum lliure):
+    mateixa secció 'Resum de la reunió' que els seguiments (perquè
+    parse_ordre_del_dia la reconegui) però SENSE l'agenda 'Ordre del dia
+    propera reunió:' — un resum pur no porta seguiment de temes."""
+    lines = [f"### Resum de la reunió {date_str}", ""]
+
+    for i, t in enumerate(result.updated_topics, 1):
+        lines.append(f"#### *{i}) {t.topic_name}*")
+        lines.append(f"* {t.summary}")
+        lines.append("")
+
+    if result.new_other_topics:
+        lines.append("#### *Altres temes*")
+        for topic in result.new_other_topics:
+            lines.append(f"* {topic}")
+        lines.append("")
+
+    return '\n'.join(lines).rstrip('\n') + '\n'
+
+
 def parse_ordre_del_dia(text: str) -> MeetingAnalysisResult:
     """Invers de format_ordre_del_dia: reconstrueix el MeetingAnalysisResult a
     partir del fitxer Ordre del dia de la sèrie (possiblement editat a
@@ -219,7 +288,7 @@ def parse_ordre_del_dia(text: str) -> MeetingAnalysisResult:
 
     started = False
     for line in text.splitlines():
-        if re.match(r'^#{2,6}\s+Resum de la reunió anterior', line):
+        if re.match(r'^#{2,6}\s+Resum de la reunió', line):
             started = True
             continue
         if not started:
@@ -252,27 +321,49 @@ def parse_ordre_del_dia(text: str) -> MeetingAnalysisResult:
 
 
 ORDRE_PENDING_KEY = 'pendent_revisio'
+ORDRE_KIND_KEY = 'tipus_consolidacio'  # 'seguiment' (default) | 'resum'
+ORDRE_INTERNAL_KEYS = (ORDRE_PENDING_KEY, ORDRE_KIND_KEY)
 
 
-def with_pending_marker(ordre_content: str) -> str:
+def with_pending_marker(ordre_content: str, kind: str = 'seguiment') -> str:
     """Afegeix el frontmatter '<ORDRE_PENDING_KEY>: true' a dalt de l'Ordre del
     dia (fase 1) perquè sigui cercable a Obsidian com a pendent de revisar
     (`[pendent_revisio]` al cercador). `parse_ordre_del_dia` ignora el
-    frontmatter (va abans de la capçalera 'Resum')."""
-    return f"---\n{ORDRE_PENDING_KEY}: true\n---\n{ordre_content}"
+    frontmatter (va abans de la capçalera 'Resum').
+
+    `kind` indica a la fase 2 (Consolidar) com propagar el contingut: 'seguiment'
+    (default) → Temes oberts + anual; 'resum' → només anual. Per a 'seguiment'
+    NO s'escriu la clau de tipus (compatibilitat amb Ordres del dia existents:
+    l'absència de la clau es llegeix com a 'seguiment')."""
+    if kind == 'seguiment':
+        return f"---\n{ORDRE_PENDING_KEY}: true\n---\n{ordre_content}"
+    return f"---\n{ORDRE_PENDING_KEY}: true\n{ORDRE_KIND_KEY}: {kind}\n---\n{ordre_content}"
+
+
+def read_ordre_kind(text: str) -> str:
+    """Llegeix el tipus de consolidació del frontmatter de l'Ordre del dia.
+    Retorna 'seguiment' si la clau no hi és (compatibilitat enrere)."""
+    m = re.match(r'^---\n(.*?)\n---\n?', text, re.DOTALL)
+    if not m:
+        return 'seguiment'
+    for line in m.group(1).splitlines():
+        km = re.match(rf'^\s*{ORDRE_KIND_KEY}\s*:\s*(.+?)\s*$', line)
+        if km:
+            return km.group(1).strip()
+    return 'seguiment'
 
 
 def strip_pending_marker(text: str) -> str:
-    """Treu la clau de pendent de revisar del frontmatter (fase 2), conservant la
-    resta del fitxer (incloses edicions de l'usuari i altres claus). Si el
-    frontmatter queda buit, l'elimina del tot. Idempotent: si no hi ha la marca,
+    """Treu les claus internes de processat del frontmatter (fase 2), conservant
+    la resta del fitxer (incloses edicions de l'usuari i altres claus). Si el
+    frontmatter queda buit, l'elimina del tot. Idempotent: si no hi ha cap marca,
     retorna el text sense canvis."""
     m = re.match(r'^---\n(.*?)\n---\n?', text, re.DOTALL)
     if not m:
         return text
     fm_lines = [
         line for line in m.group(1).splitlines()
-        if not re.match(rf'^\s*{ORDRE_PENDING_KEY}\s*:', line)
+        if not any(re.match(rf'^\s*{key}\s*:', line) for key in ORDRE_INTERNAL_KEYS)
     ]
     rest = text[m.end():]
     fm_body = '\n'.join(fm_lines).strip('\n')

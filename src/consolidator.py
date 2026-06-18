@@ -14,7 +14,9 @@ Lògica pura (sense Qt): rep un ObsidianWriter ja construït.
 """
 from pathlib import Path
 
-from meeting_analyzer import parse_ordre_del_dia, strip_pending_marker, StateFileUpdater
+from meeting_analyzer import (
+    parse_ordre_del_dia, strip_pending_marker, read_ordre_kind, StateFileUpdater,
+)
 
 TEMES_FILENAME = 'Temes oberts.md'
 
@@ -40,13 +42,20 @@ def consolidate_pending_note(obsidian, note: dict) -> dict:
 
     if not ordre_path.exists():
         raise FileNotFoundError(f"Falta {ordre_path.name} a {series_dir.name}")
-    if not temes_path.exists():
-        raise FileNotFoundError(f"Falta {TEMES_FILENAME} a {series_dir.name}")
 
     ordre_text = ordre_path.read_text(encoding='utf-8')
+    kind = read_ordre_kind(ordre_text)
     result = parse_ordre_del_dia(ordre_text)
 
-    meeting_block = StateFileUpdater().update(temes_path, result, note['date'])
+    if kind == 'resum':
+        # Resum lliure (opció 'Resum'): NO toca Temes oberts; només propaga el
+        # resum al fitxer anual. Per això tampoc s'exigeix que existeixi Temes
+        # oberts a la sèrie.
+        meeting_block = StateFileUpdater().build_year_block(result)
+    else:
+        if not temes_path.exists():
+            raise FileNotFoundError(f"Falta {TEMES_FILENAME} a {series_dir.name}")
+        meeting_block = StateFileUpdater().update(temes_path, result, note['date'])
     year_written = False
     if meeting_block:
         attendees = obsidian.read_attendees_string(note_path)
