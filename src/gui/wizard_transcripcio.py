@@ -251,23 +251,42 @@ class WizardTranscripcio(QDialog):
             return item.recording.file_id
         return item.file_id
 
+    @staticmethod
+    def _recording_timing(rec: PlaudRecording) -> dict:
+        """Timing real d'una gravació: `start`/`end`/`duration` en hora local.
+
+        `rec.start_at` és tz-aware UTC; `_gen_content` i `_note_stem` fan
+        `strftime` sobre el wall-clock, així que cal `.astimezone()` per no
+        estampar l'hora (ni, a la nit, la data) en UTC. `duration` és str d'un
+        timedelta, com a `_parse_event`.
+        """
+        start = rec.start_at.astimezone() if rec.start_at else None
+        end = (start + timedelta(seconds=rec.duration_seconds)) if start else None
+        return {
+            'start': start,
+            'end': end,
+            'duration': str(end - start) if (start and end) else '',
+        }
+
     def _item_meeting_dict(self, item: WorkItem) -> dict:
         """Retorna un dict compatible amb ObsidianWriter.create_simple_note."""
         if isinstance(item, Pair):
-            return item.event
+            # Del Calendar prenem la identitat (títol, assistents); el timing el
+            # marca la gravació, que és l'hora real en què va començar la reunió
+            # (l'event programat pot no coincidir). Si la gravació no té
+            # `start_at`, conservem el de l'event com a fallback.
+            meeting = dict(item.event)
+            timing = self._recording_timing(item.recording)
+            if timing['start'] is not None:
+                meeting.update(timing)
+            return meeting
         # Gravació orfe seleccionada → fabriquem dict amb metadades del Plaud.
         # El nom es manté tal qual el dóna Plaud (decisió de l'usuari).
         rec: PlaudRecording = item
-        start = rec.start_at
-        end = (start + timedelta(seconds=rec.duration_seconds)) if start else start
         return {
             'title': rec.name,
-            'start': start,
-            'end': end,
-            # _gen_content requereix 'duration' (str d'un timedelta, com a
-            # _parse_event). Sense això, create_simple_note fallava per a orfes.
-            'duration': str(end - start) if (start and end) else '',
             'attendees': [],
+            **self._recording_timing(rec),
         }
 
     # -- Navegació --

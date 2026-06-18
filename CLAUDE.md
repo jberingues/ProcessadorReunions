@@ -104,7 +104,9 @@ Resum funcional; per a signatures exactes llegeix el mòdul. Es destaquen només
 
 ## Wizard Transcripcio — Flux
 
-3 pàgines (`QStackedWidget`) + iteració. Pàg.0 `PairingView` (càrrega paral·lela `CalendarWorker`+`PlaudListWorker`, auto-match) → cua `pairs + orphan_recordings_seleccionades` → per item: pàg.1 arbre de carpetes (seleccionables les que tenen `Reunions/`; suporta niu via `_has_series_descendant`; no navega dins `Reunions/`) → pàg.2 baixa transcripció + edita → desa `create_simple_note`. Per orfes es fabrica `{title:rec.name, start, end, duration, attendees:[]}` (**`duration` imprescindible** per `_gen_content`).
+3 pàgines (`QStackedWidget`) + iteració. Pàg.0 `PairingView` (càrrega paral·lela `CalendarWorker`+`PlaudListWorker`, auto-match) → cua `pairs + orphan_recordings_seleccionades` → per item: pàg.1 arbre de carpetes (seleccionables les que tenen `Reunions/`; suporta niu via `_has_series_descendant`; no navega dins `Reunions/`) → pàg.2 baixa transcripció + edita → desa `create_simple_note`.
+
+**Timing de la nota = hora real de la gravació** (decisió 2026-06-17, `_item_meeting_dict` + helper `_recording_timing`): la data/hora/durada de la nota (nom `YYMMDD_…` i frontmatter) surten de `recording.start_at`, **no** de l'event programat al Calendar (que pot no coincidir amb quan va començar de debò). Per als parells, del Calendar només prenem la **identitat** (títol, assistents); el timing el marca la gravació (fallback a l'event si la gravació no té `start_at`). Per orfes el dict porta `title:rec.name, attendees:[]` + el timing. **`start_at` és UTC** → `_recording_timing` fa `.astimezone()` perquè `_gen_content`/`_note_stem` escriuen el wall-clock (sense convertir, a la nit el nom del fitxer quedaria amb el dia equivocat). `duration` és str d'un timedelta (imprescindible per `_gen_content`).
 
 **Gotchas:**
 - **Re-imports duplicats**: en confirmar carpeta, `_confirm_if_note_exists()` → `find_existing_note` (3 sufixos). Si existeix: QMessageBox **Ometre**(default)/**Importar igualment**. Cal perquè `PairingView` recarrega el dia sense saber què ja es va importar.
