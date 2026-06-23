@@ -214,14 +214,11 @@ class WizardCorreccio(QDialog):
                     except Exception as e:
                         print(f"[WizardCorreccio] Error desant còpia original: {e}")
 
-                reference_transcript = None
-                processed_siblings = sorted(
-                    [p for p in note['path'].parent.glob('*.md') if '*' in p.stem],
-                    key=lambda p: p.stem[:6],
-                    reverse=True
-                )
-                if processed_siblings:
-                    reference_transcript = self.obsidian.read_transcript(processed_siblings[0])
+                # Referència = els 2 darrers resums anuals (validats per l'usuari
+                # a la fase 2), no la transcripció corregida: aquesta pot tenir
+                # errors residuals (auto-aplicada sense revisar) i, com que al
+                # prompt es presenta com a "ja correcte", suprimiria correccions.
+                reference_summary = self.obsidian.read_recent_year_blocks(note['path'], n=2)
 
                 semantic_context = None
                 if meeting_dir.name != 'Reunions':
@@ -241,7 +238,7 @@ class WizardCorreccio(QDialog):
                     'index': idx,
                     'corrector': corrector,
                     'transcript': transcript,
-                    'reference_transcript': reference_transcript,
+                    'reference_summary': reference_summary,
                     'semantic_context': semantic_context,
                 })
             except Exception as e:

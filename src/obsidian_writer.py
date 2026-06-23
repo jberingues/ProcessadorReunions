@@ -107,6 +107,38 @@ class ObsidianWriter:
 
         return year_note
 
+    def read_recent_year_blocks(self, meeting_note_path: Path, n: int = 2) -> "str | None":
+        """Retorna els últims `n` blocs (`## <data> - <títol>`) dels fitxers
+        anuals de la sèrie, en ordre cronològic, com a text de referència.
+
+        Usat per la correcció de transcripcions: el resum anual l'ha validat
+        l'usuari (fase 2), per tant és una referència fiable de com s'escriuen
+        noms propis i termes tècnics, a diferència de la transcripció corregida
+        (que pot tenir errors residuals si es va auto-aplicar sense revisar).
+        Es prenen els últims `n` perquè a la darrera reunió potser no s'han
+        tractat tots els temes; dos blocs cobreixen més vocabulari que un.
+
+        El subfolder i el nom dels anuals es deriven com a `append_to_year_note`.
+        Pot haver-hi més d'un fitxer anual (canvi d'any): es concatenen per any
+        ascendent. Retorna None si no hi ha cap anual amb blocs.
+        """
+        subfolder = meeting_note_path.parent.parent
+        series = series_name_for_file(subfolder.name)
+        name_re = re.compile(rf'^\d{{4}} {re.escape(series)}\.md$')
+        year_files = sorted(
+            (p for p in subfolder.glob(f'*{series}.md') if name_re.match(p.name)),
+            key=lambda p: p.name[:4]
+        )
+        blocks = []
+        for yf in year_files:
+            text = yf.read_text(encoding='utf-8')
+            for part in re.split(r'(?m)^(?=## )', text):
+                if part.lstrip().startswith('## '):
+                    blocks.append(part.strip())
+        if not blocks:
+            return None
+        return '\n\n'.join(blocks[-n:])
+
     def _note_stem(self, meeting: dict) -> str:
         """Stem del fitxer d'una nota de reunió: 'YYMMDD_<títol net>'.
 

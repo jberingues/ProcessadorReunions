@@ -16,7 +16,7 @@ class TranscriptCorrector:
         self.llm = LLM(model=model or os.getenv('LLM_MODELH'), drop_params=True)
         self.threshold_auto = threshold_auto
 
-    def detect(self, transcript: str, reference_transcript: str = None, semantic_context=None) -> tuple[str, list[dict]]:
+    def detect(self, transcript: str, reference_summary: str = None, semantic_context=None) -> tuple[str, list[dict]]:
         """Aplica correccions memoritzades i detecta nous errors amb LLM.
 
         Returns:
@@ -51,10 +51,10 @@ Temes recurrents: {', '.join(semantic_context.topic_context) or 'cap'}{terms_lin
 """
 
         ref_section = ''
-        if reference_transcript:
+        if reference_summary:
             ref_section = f"""
-EXEMPLE DE TRANSCRIPCIÓ JA CORREGIDA (reunió anterior de la mateixa sèrie, usa-la com a referència de noms, termes i estil):
-{reference_transcript}
+RESUMS VALIDATS DE REUNIONS ANTERIORS DE LA MATEIXA SÈRIE (redactats i revisats per l'usuari; són una referència FIABLE de com s'escriuen correctament els noms propis, productes i termes tècnics d'aquesta sèrie):
+{reference_summary}
 """
 
 

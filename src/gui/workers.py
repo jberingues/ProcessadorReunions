@@ -94,19 +94,19 @@ class CorrectionDetectWorker(QThread):
     finished = Signal(str, list)
     error = Signal(str)
 
-    def __init__(self, corrector, transcript, reference_transcript=None,
+    def __init__(self, corrector, transcript, reference_summary=None,
                  semantic_context=None, parent=None):
         super().__init__(parent)
         self.corrector = corrector
         self.transcript = transcript
-        self.reference_transcript = reference_transcript
+        self.reference_summary = reference_summary
         self.semantic_context = semantic_context
 
     def run(self):
         try:
             transcript, corrections = self.corrector.detect(
                 self.transcript,
-                reference_transcript=self.reference_transcript,
+                reference_summary=self.reference_summary,
                 semantic_context=self.semantic_context
             )
             self.finished.emit(transcript, corrections)
@@ -137,7 +137,7 @@ class BatchCorrectionDetectWorker(QThread):
             try:
                 transcript, corrections = task['corrector'].detect(
                     task['transcript'],
-                    reference_transcript=task['reference_transcript'],
+                    reference_summary=task['reference_summary'],
                     semantic_context=task['semantic_context']
                 )
                 self.note_finished.emit(task['index'], transcript, corrections)
