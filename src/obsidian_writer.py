@@ -2,6 +2,10 @@ import re
 import yaml
 from pathlib import Path
 
+# Sufixos que codifiquen l'estat d'una nota al nom de fitxer (vegeu Note
+# Lifecycle al CLAUDE.md): ~ corregida, + pendent de consolidar, * processada.
+STATE_SUFFIXES = ('~', '+', '*')
+
 
 def series_name_for_file(folder_name: str) -> str:
     """Converteix el nom d'una subcarpeta de sèrie a la versió apta per a noms de fitxer.
@@ -144,9 +148,17 @@ class ObsidianWriter:
 
         Compartit entre `create_simple_note` (on escriu) i `find_existing_note`
         (on comprova si ja existeix) perquè el nom es calculi en un sol lloc.
+
+        Si el títol net acaba en un dels sufixos d'estat (~ + *), s'hi afegeix un
+        '_' final per evitar que es confongui amb el marcador d'estat (e.g. un
+        títol "Vigik+" col·lisionaria amb l'estat '+' pendent de consolidar i
+        trencaria el cicle de vida de la nota).
         """
         data = meeting['start'].strftime('%y%m%d')
-        return f"{data}_{self._clean(meeting['title'])}"
+        stem = f"{data}_{self._clean(meeting['title'])}"
+        if stem.endswith(STATE_SUFFIXES):
+            stem += '_'
+        return stem
 
     def find_existing_note(self, meeting: dict, target_dir) -> "Path | None":
         """Retorna la nota ja existent per a aquesta reunió a `target_dir`, o None.
@@ -160,7 +172,7 @@ class ObsidianWriter:
             return None
         target_dir = Path(target_dir)
         stem = self._note_stem(meeting)
-        for suffix in ('', '~', '+', '*'):
+        for suffix in ('',) + STATE_SUFFIXES:
             candidate = target_dir / f"{stem}{suffix}.md"
             if candidate.exists():
                 return candidate
@@ -364,7 +376,7 @@ from: "{thread['from']}"
                 continue
             if p.parent.name != 'Reunions':
                 continue
-            if not p.stem.endswith(('~', '+', '*')):
+            if not p.stem.endswith(STATE_SUFFIXES):
                 parts = p.stem.split('_', 1)
                 date_str = parts[0] if len(parts[0]) == 6 else ''
                 title = parts[1].replace('_', ' ') if len(parts) > 1 else p.stem
