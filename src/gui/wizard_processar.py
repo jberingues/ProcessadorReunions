@@ -258,6 +258,12 @@ class WizardProcessar(QDialog):
         self.table_batch.setItem(idx, 3, QTableWidgetItem("Processant..."))
 
         note = item.note
+        # Defensa contra llistes obsoletes: si la nota ja s'ha processat (renombrada
+        # ~ -> + / *) en una passada anterior, el path ~ ja no existeix. L'ometem en
+        # comptes de petar amb FileNotFoundError.
+        if not note['path'].exists():
+            self._batch_skip(idx, "ja processada (recarrega la llista)")
+            return
         try:
             transcript = self.obsidian.read_transcript(note['path'])
             if item.option == OPTION_SINCRO:
@@ -498,6 +504,10 @@ class WizardProcessar(QDialog):
                 self.worker_processing.quit()
                 self.worker_processing.wait(3000)
                 self._batch_queue.clear()
+            # Recarrega la llista: el lot anterior ha renombrat notes (~ -> + / *)
+            # i els Path cachejats a self.notes han quedat obsolets. Sense això,
+            # re-processar llegiria fitxers ~ inexistents (FileNotFoundError).
+            self._load_notes()
             self.stack.setCurrentIndex(0)
             self._update_nav()
 
