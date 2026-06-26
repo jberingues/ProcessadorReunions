@@ -378,9 +378,12 @@ from: "{thread['from']}"
                 continue
             if not p.stem.endswith(STATE_SUFFIXES):
                 parts = p.stem.split('_', 1)
-                date_str = parts[0] if len(parts[0]) == 6 else ''
+                # Només notes de reunió (prefix YYMMDD numèric). Exclou fitxers
+                # solts dins Reunions/ sense data (e.g. CLAUDE.md, README.md).
+                if len(parts[0]) != 6 or not parts[0].isdigit():
+                    continue
                 title = parts[1].replace('_', ' ') if len(parts) > 1 else p.stem
-                notes.append({'path': p, 'title': title, 'date': date_str})
+                notes.append({'path': p, 'title': title, 'date': parts[0]})
         return sorted(notes, key=lambda n: n['date'], reverse=True)
 
     def mark_as_corrected(self, path: Path) -> Path:

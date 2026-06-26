@@ -110,6 +110,15 @@ class TestNoteLifecycle(unittest.TestCase):
         names = {n["path"].name for n in uncorrected}
         self.assertEqual(names, {"260521_Nova.md"})
 
+    def test_uncorrected_excludes_non_meeting_files(self):
+        # Fitxers solts dins Reunions/ sense prefix YYMMDD no són reunions.
+        self._note("CLAUDE.md")
+        self._note("README.md")
+        self._note("260521_Nova.md")
+        uncorrected = self.writer.find_uncorrected_notes()
+        names = {n["path"].name for n in uncorrected}
+        self.assertEqual(names, {"260521_Nova.md"})
+
 
 if __name__ == "__main__":
     unittest.main()

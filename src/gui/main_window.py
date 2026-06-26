@@ -1,6 +1,9 @@
 import os
 
-from PySide6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QPushButton, QLabel, QMessageBox
+from PySide6.QtWidgets import (
+    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QListWidget,
+    QPushButton, QLabel, QMessageBox, QApplication,
+)
 from PySide6.QtCore import Qt
 from calendar_matcher import CalendarMatcher
 from obsidian_writer import ObsidianWriter
@@ -21,7 +24,12 @@ class MainWindow(QMainWindow):
     def __init__(self, vault_path: str):
         super().__init__()
         self.setWindowTitle("Processador de Reunions")
-        self.setMinimumSize(400, 300)
+        self.setMinimumSize(900, 480)
+        # Aprofita tota l'amplada de la pantalla; no cal gaire alçada perquè
+        # mai hi ha més de ~10 reunions per columna.
+        avail = QApplication.primaryScreen().availableGeometry()
+        self.resize(avail.width(), 640)
+        self.move(avail.left(), avail.top())
 
         self.vault_path = vault_path
         self.calendar = CalendarMatcher()
@@ -33,7 +41,6 @@ class MainWindow(QMainWindow):
         central = QWidget()
         self.setCentralWidget(central)
         layout = QVBoxLayout(central)
-        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.setSpacing(16)
 
         title = QLabel("Processador de Reunions")
@@ -41,61 +48,77 @@ class MainWindow(QMainWindow):
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title)
 
-        self.btn_transcripcions = QPushButton("Entrar transcripcions")
-        self.btn_transcripcions.setMinimumHeight(50)
-        self.btn_transcripcions.setStyleSheet("font-size: 14px;")
+        # --- Tauler de fases: 3 columnes per estat del cicle de vida ---
+        # Cada columna llista les notes en aquell estat (via els finders de
+        # ObsidianWriter) i el botó del peu obre el wizard de la fase tal qual.
+        board = QHBoxLayout()
+        board.setSpacing(12)
+
+        self.list_correccio = QListWidget()
+        self.box_correccio = QGroupBox("Per corregir")
+        col = QVBoxLayout(self.box_correccio)
+        col.addWidget(self.list_correccio)
+        self.btn_correccio = QPushButton("Corregir")
+        self.btn_correccio.setMinimumHeight(40)
+        self.btn_correccio.clicked.connect(self._open_correccio)
+        col.addWidget(self.btn_correccio)
+        board.addWidget(self.box_correccio)
+
+        self.list_processar = QListWidget()
+        self.box_processar = QGroupBox("Per processar")
+        col = QVBoxLayout(self.box_processar)
+        col.addWidget(self.list_processar)
+        self.btn_processar = QPushButton("Processar")
+        self.btn_processar.setMinimumHeight(40)
+        self.btn_processar.clicked.connect(self._open_processar)
+        col.addWidget(self.btn_processar)
+        board.addWidget(self.box_processar)
+
+        self.list_consolidar = QListWidget()
+        self.box_consolidar = QGroupBox("Per consolidar")
+        col = QVBoxLayout(self.box_consolidar)
+        col.addWidget(self.list_consolidar)
+        self.btn_consolidar = QPushButton("Consolidar")
+        self.btn_consolidar.setMinimumHeight(40)
+        self.btn_consolidar.clicked.connect(self._open_consolidar)
+        col.addWidget(self.btn_consolidar)
+        board.addWidget(self.box_consolidar)
+
+        layout.addLayout(board, stretch=1)
+
+        # --- Accions auxiliars (fora del cicle de fases) ---
+        actions = QHBoxLayout()
+        actions.setSpacing(8)
+
+        self.btn_transcripcions = QPushButton("Entrar reunió nova")
         self.btn_transcripcions.clicked.connect(self._open_transcripcions)
-        layout.addWidget(self.btn_transcripcions)
+        actions.addWidget(self.btn_transcripcions)
 
         self.btn_correus = QPushButton("Entrar correus")
-        self.btn_correus.setMinimumHeight(50)
-        self.btn_correus.setStyleSheet("font-size: 14px;")
         self.btn_correus.clicked.connect(self._open_correus)
-        layout.addWidget(self.btn_correus)
+        actions.addWidget(self.btn_correus)
 
         self.btn_sync_labels = QPushButton("Sincronitzar etiquetes Gmail")
-        self.btn_sync_labels.setMinimumHeight(50)
-        self.btn_sync_labels.setStyleSheet("font-size: 14px;")
         self.btn_sync_labels.clicked.connect(self._sync_gmail_labels)
-        layout.addWidget(self.btn_sync_labels)
+        actions.addWidget(self.btn_sync_labels)
 
         self.btn_fitxers = QPushButton("Entrar fitxers")
-        self.btn_fitxers.setMinimumHeight(50)
-        self.btn_fitxers.setStyleSheet("font-size: 14px;")
         self.btn_fitxers.clicked.connect(self._open_fitxers)
-        layout.addWidget(self.btn_fitxers)
-
-        self.btn_correccio = QPushButton("Correcció transcripcions")
-        self.btn_correccio.setMinimumHeight(50)
-        self.btn_correccio.setStyleSheet("font-size: 14px;")
-        self.btn_correccio.clicked.connect(self._open_correccio)
-        layout.addWidget(self.btn_correccio)
-
-        self.btn_processar = QPushButton("Processar reunions")
-        self.btn_processar.setMinimumHeight(50)
-        self.btn_processar.setStyleSheet("font-size: 14px;")
-        self.btn_processar.clicked.connect(self._open_processar)
-        layout.addWidget(self.btn_processar)
-
-        self.btn_consolidar = QPushButton("Consolidar reunions")
-        self.btn_consolidar.setMinimumHeight(50)
-        self.btn_consolidar.setStyleSheet("font-size: 14px;")
-        self.btn_consolidar.clicked.connect(self._open_consolidar)
-        layout.addWidget(self.btn_consolidar)
+        actions.addWidget(self.btn_fitxers)
 
         self.btn_processar_correus = QPushButton("Processar correus")
-        self.btn_processar_correus.setMinimumHeight(50)
-        self.btn_processar_correus.setStyleSheet("font-size: 14px;")
         self.btn_processar_correus.clicked.connect(self._open_processar_correus)
-        layout.addWidget(self.btn_processar_correus)
+        actions.addWidget(self.btn_processar_correus)
 
         self.btn_nou_projecte = QPushButton("Crear un projecte nou")
-        self.btn_nou_projecte.setMinimumHeight(50)
-        self.btn_nou_projecte.setStyleSheet("font-size: 14px;")
         self.btn_nou_projecte.clicked.connect(self._open_nou_projecte)
-        layout.addWidget(self.btn_nou_projecte)
+        actions.addWidget(self.btn_nou_projecte)
+
+        layout.addLayout(actions)
 
         self._all_buttons = [self.btn_transcripcions, self.btn_correus, self.btn_sync_labels, self.btn_fitxers, self.btn_correccio, self.btn_processar, self.btn_consolidar, self.btn_processar_correus, self.btn_nou_projecte]
+
+        self._refresh_dashboard()
 
     def _open_transcripcions(self):
         self._disable_all()
@@ -184,6 +207,27 @@ class MainWindow(QMainWindow):
         wizard.finished.connect(self._wizard_closed)
         wizard.open()
 
+    def _refresh_dashboard(self):
+        """Re-escaneja el vault i reomple les 3 columnes del tauler. Els finders
+        de ObsidianWriter són escanejos de fitxers (sincrons i barats)."""
+        self._fill_column(self.list_correccio, self.box_correccio, self.btn_correccio,
+                          "Per corregir", self.obsidian.find_uncorrected_notes(), with_series=False)
+        self._fill_column(self.list_processar, self.box_processar, self.btn_processar,
+                          "Per processar", self.obsidian.find_corrected_notes(), with_series=True)
+        self._fill_column(self.list_consolidar, self.box_consolidar, self.btn_consolidar,
+                          "Per consolidar", self.obsidian.find_pending_consolidation_notes(), with_series=True)
+
+    def _fill_column(self, list_widget, box, button, title, notes, with_series):
+        list_widget.clear()
+        for n in notes:
+            label = f"{n['date']} — {n['title']}"
+            if with_series:
+                # sèrie = carpeta pare de Reunions/ (igual que wizard_consolidar)
+                label += f"  ({n['path'].parent.parent.name})"
+            list_widget.addItem(label)
+        box.setTitle(f"{title} ({len(notes)})")
+        button.setEnabled(bool(notes))
+
     def _disable_all(self):
         for btn in self._all_buttons:
             btn.setEnabled(False)
@@ -191,3 +235,4 @@ class MainWindow(QMainWindow):
     def _wizard_closed(self):
         for btn in self._all_buttons:
             btn.setEnabled(True)
+        self._refresh_dashboard()
