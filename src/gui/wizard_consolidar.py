@@ -17,12 +17,15 @@ from consolidator import consolidate_pending_note
 
 
 class WizardConsolidar(QDialog):
-    def __init__(self, obsidian, parent=None):
+    def __init__(self, obsidian, parent=None, preselected_paths=None):
         super().__init__(parent)
         self.obsidian = obsidian
         self.setWindowTitle("Consolidar reunions")
         self.setMinimumSize(800, 500)
 
+        # Si s'obre des del tauler, es filtra a les notes triades i es
+        # preseleccionen totes (l'usuari només ha de confirmar).
+        self.preselected_paths = preselected_paths
         self.notes = []
 
         layout = QVBoxLayout(self)
@@ -77,6 +80,8 @@ class WizardConsolidar(QDialog):
 
     def _load_notes(self):
         self.notes = self.obsidian.find_pending_consolidation_notes()
+        if self.preselected_paths is not None:
+            self.notes = [n for n in self.notes if n['path'] in self.preselected_paths]
         self.table.setRowCount(len(self.notes))
         for i, n in enumerate(self.notes):
             series = n['path'].parent.parent.name
@@ -84,6 +89,8 @@ class WizardConsolidar(QDialog):
             self.table.setItem(i, 1, QTableWidgetItem(n['title']))
             self.table.setItem(i, 2, QTableWidgetItem(series))
             self.table.setItem(i, 3, QTableWidgetItem("Pendent"))
+        if self.preselected_paths is not None:
+            self.table.selectAll()
         self._on_selection_changed()
         self.btn_consolidar.setEnabled(len(self.notes) > 0)
 

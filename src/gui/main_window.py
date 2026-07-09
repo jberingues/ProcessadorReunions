@@ -2,7 +2,7 @@ import os
 
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QListWidget,
-    QPushButton, QLabel, QMessageBox, QApplication,
+    QPushButton, QLabel, QMessageBox, QApplication, QAbstractItemView,
 )
 from PySide6.QtCore import Qt
 from calendar_matcher import CalendarMatcher
@@ -55,32 +55,41 @@ class MainWindow(QMainWindow):
         board.setSpacing(12)
 
         self.list_correccio = QListWidget()
+        self.list_correccio.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.box_correccio = QGroupBox("Per corregir")
         col = QVBoxLayout(self.box_correccio)
         col.addWidget(self.list_correccio)
         self.btn_correccio = QPushButton("Corregir")
         self.btn_correccio.setMinimumHeight(40)
+        self.btn_correccio.setToolTip("Selecciona una o més reunions a la llista")
         self.btn_correccio.clicked.connect(self._open_correccio)
+        self.list_correccio.itemSelectionChanged.connect(self._update_action_buttons)
         col.addWidget(self.btn_correccio)
         board.addWidget(self.box_correccio)
 
         self.list_processar = QListWidget()
+        self.list_processar.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.box_processar = QGroupBox("Per processar")
         col = QVBoxLayout(self.box_processar)
         col.addWidget(self.list_processar)
         self.btn_processar = QPushButton("Processar")
         self.btn_processar.setMinimumHeight(40)
+        self.btn_processar.setToolTip("Selecciona una o més reunions a la llista")
         self.btn_processar.clicked.connect(self._open_processar)
+        self.list_processar.itemSelectionChanged.connect(self._update_action_buttons)
         col.addWidget(self.btn_processar)
         board.addWidget(self.box_processar)
 
         self.list_consolidar = QListWidget()
+        self.list_consolidar.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.box_consolidar = QGroupBox("Per consolidar")
         col = QVBoxLayout(self.box_consolidar)
         col.addWidget(self.list_consolidar)
         self.btn_consolidar = QPushButton("Consolidar")
         self.btn_consolidar.setMinimumHeight(40)
+        self.btn_consolidar.setToolTip("Selecciona una o més reunions a la llista")
         self.btn_consolidar.clicked.connect(self._open_consolidar)
+        self.list_consolidar.itemSelectionChanged.connect(self._update_action_buttons)
         col.addWidget(self.btn_consolidar)
         board.addWidget(self.box_consolidar)
 
@@ -127,14 +136,22 @@ class MainWindow(QMainWindow):
         wizard.open()
 
     def _open_processar(self):
+        notes = self._selected_notes(self.list_processar)
+        if not notes:
+            return
         self._disable_all()
-        wizard = WizardProcessar(self.calendar, self.obsidian, self)
+        wizard = WizardProcessar(self.calendar, self.obsidian, self,
+                                 preselected_paths={n['path'] for n in notes})
         wizard.finished.connect(self._wizard_closed)
         wizard.open()
 
     def _open_consolidar(self):
+        notes = self._selected_notes(self.list_consolidar)
+        if not notes:
+            return
         self._disable_all()
-        wizard = WizardConsolidar(self.obsidian, self)
+        wizard = WizardConsolidar(self.obsidian, self,
+                                  preselected_paths={n['path'] for n in notes})
         wizard.finished.connect(self._wizard_closed)
         wizard.open()
 
@@ -202,8 +219,12 @@ class MainWindow(QMainWindow):
         wizard.open()
 
     def _open_correccio(self):
+        notes = self._selected_notes(self.list_correccio)
+        if not notes:
+            return
         self._disable_all()
-        wizard = WizardCorreccio(self.obsidian, self)
+        wizard = WizardCorreccio(self.obsidian, self,
+                                 preselected_paths={n['path'] for n in notes})
         wizard.finished.connect(self._wizard_closed)
         wizard.open()
 
@@ -219,6 +240,8 @@ class MainWindow(QMainWindow):
 
     def _fill_column(self, list_widget, box, button, title, notes, with_series):
         list_widget.clear()
+        # Les notes queden lligades a la llista per mapejar selecció → nota.
+        list_widget.notes_data = notes
         for n in notes:
             label = f"{n['date']} — {n['title']}"
             if with_series:
@@ -226,7 +249,19 @@ class MainWindow(QMainWindow):
                 label += f"  ({n['path'].parent.parent.name})"
             list_widget.addItem(label)
         box.setTitle(f"{title} ({len(notes)})")
-        button.setEnabled(bool(notes))
+        # El botó s'habilita segons la selecció (vegeu _update_action_buttons),
+        # no segons el nombre de notes: el tauler és l'únic punt de selecció.
+        self._update_action_buttons()
+
+    def _selected_notes(self, list_widget):
+        """Retorna les notes seleccionades a la llista (dicts dels finders)."""
+        notes = getattr(list_widget, 'notes_data', [])
+        return [notes[i.row()] for i in list_widget.selectedIndexes()]
+
+    def _update_action_buttons(self):
+        self.btn_correccio.setEnabled(bool(self.list_correccio.selectedIndexes()))
+        self.btn_processar.setEnabled(bool(self.list_processar.selectedIndexes()))
+        self.btn_consolidar.setEnabled(bool(self.list_consolidar.selectedIndexes()))
 
     def _disable_all(self):
         for btn in self._all_buttons:

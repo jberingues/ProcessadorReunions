@@ -28,10 +28,32 @@ class TestParseOrdreDelDia(unittest.TestCase):
 
     def assertResultEqual(self, a: MeetingAnalysisResult, b: MeetingAnalysisResult):
         self.assertEqual(
-            [(t.topic_name, t.summary) for t in a.updated_topics],
-            [(t.topic_name, t.summary) for t in b.updated_topics],
+            [(t.topic_name, t.summary, t.conclusion) for t in a.updated_topics],
+            [(t.topic_name, t.summary, t.conclusion) for t in b.updated_topics],
         )
         self.assertEqual(a.new_other_topics, b.new_other_topics)
+
+    def test_roundtrip_with_conclusion(self):
+        result = MeetingAnalysisResult(
+            updated_topics=[
+                ActiveTopicUpdate(
+                    topic_name="Migració base de dades",
+                    summary="S'ha decidit fer-la al Q3.",
+                    conclusion="Migració planificada per al Q3.",
+                ),
+                ActiveTopicUpdate(
+                    topic_name="API REST",
+                    summary="Pendent revisar autenticació.",
+                    conclusion="Cal decidir el mètode d'autenticació.",
+                ),
+            ],
+            new_other_topics=[],
+        )
+        text = format_ordre_del_dia(
+            result, ["Migració base de dades", "API REST"], "15/06/2026"
+        )
+        self.assertIn("**Conclusió:** Migració planificada per al Q3.", text)
+        self.assertResultEqual(parse_ordre_del_dia(text), result)
 
     # -- Round-trips: format → parse == original --
 

@@ -57,13 +57,16 @@ class _BatchItem:
 
 
 class WizardProcessar(QDialog):
-    def __init__(self, calendar, obsidian, parent=None):
+    def __init__(self, calendar, obsidian, parent=None, preselected_paths=None):
         super().__init__(parent)
         self.calendar = calendar
         self.obsidian = obsidian
         self.setWindowTitle("Processar reunions")
         self.setMinimumSize(800, 550)
 
+        # Si s'obre des del tauler, es filtra a les notes triades i es
+        # preseleccionen totes (l'usuari només ajusta el tipus i executa).
+        self.preselected_paths = preselected_paths
         self.notes = []
         self.row_combos: dict[int, QComboBox] = {}
         self.batch_results: dict[int, _BatchItem] = {}
@@ -129,6 +132,8 @@ class WizardProcessar(QDialog):
 
     def _load_notes(self):
         self.notes = self.obsidian.find_corrected_notes()
+        if self.preselected_paths is not None:
+            self.notes = [n for n in self.notes if n['path'] in self.preselected_paths]
         self.row_combos.clear()
         self.table_notes.setRowCount(len(self.notes))
         for i, n in enumerate(self.notes):
@@ -140,6 +145,8 @@ class WizardProcessar(QDialog):
             combo.setCurrentText(_default_option_for_path(n['path']))
             self.row_combos[i] = combo
             self.table_notes.setCellWidget(i, 2, combo)
+        if self.preselected_paths is not None:
+            self.table_notes.selectAll()
 
     def _toggle_select_all(self):
         if self.table_notes.selectionModel().selectedRows():

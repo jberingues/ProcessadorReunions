@@ -8,6 +8,7 @@ from crewai import Agent, Task, Crew, LLM
 class ActiveTopicUpdate(BaseModel):
     topic_name: str
     summary: str
+    conclusion: str = ""  # resum d'una línia del tema; "" per compat enrere
 
 
 class MeetingAnalysisResult(BaseModel):
@@ -60,6 +61,7 @@ TRANSCRIPCIÓ:
 
 INSTRUCCIONS:
 - Per cada tema obert que s'hagi tractat a la reunió, {summary_instruction}
+- Per cada tema tractat, omple també el camp `conclusion` amb una conclusió molt breu d'una sola línia (el resultat o punt clau del tema).
 - Només resumeix el que s'ha dit, no inventis.
 - Si un tema no s'ha tractat, NO l'incloguis a updated_topics.
 - Si s'han tractat temes nous que no estan a la llista de temes oberts, afegeix-los a new_other_topics amb una descripció breu.
@@ -109,8 +111,9 @@ TRANSCRIPCIÓ:
 INSTRUCCIONS:
 - Identifica els temes principals tractats a la reunió (tu decideixes quins són; no parteixes de cap llista prèvia).
 - Per cada tema, {summary_instruction}
+- Per cada tema, omple també el camp `conclusion` amb una conclusió molt breu d'una sola línia (el resultat o punt clau del tema).
 - Només resumeix el que s'ha dit, no inventis.
-- Posa TOTS els temes a updated_topics: topic_name = nom curt del tema, summary = el resum.
+- Posa TOTS els temes a updated_topics: topic_name = nom curt del tema, summary = el resum, conclusion = la conclusió d'una línia.
 - Deixa new_other_topics buit.
 """,
             expected_output="MeetingAnalysisResult amb un tema i resum per cada assumpte tractat",
@@ -157,6 +160,8 @@ class StateFileUpdater:
         for topic in result.updated_topics:
             block_lines.append(f"### {topic.topic_name}")
             block_lines.append(f"- {topic.summary}")
+            if topic.conclusion:
+                block_lines.append(f"- **Conclusió:** {topic.conclusion}")
             block_lines.append("")
         if result.new_other_topics:
             block_lines.append("#### Altres temes")
@@ -220,6 +225,8 @@ def format_ordre_del_dia(result: MeetingAnalysisResult, all_topics: list[str], d
     for i, t in enumerate(result.updated_topics, 1):
         lines.append(f"#### *{i}) {t.topic_name}*")
         lines.append(f"* {t.summary}")
+        if t.conclusion:
+            lines.append(f"* **Conclusió:** {t.conclusion}")
         lines.append("")
 
     if result.new_other_topics:
@@ -245,6 +252,8 @@ def format_resum(result: MeetingAnalysisResult, date_str: str) -> str:
     for i, t in enumerate(result.updated_topics, 1):
         lines.append(f"#### *{i}) {t.topic_name}*")
         lines.append(f"* {t.summary}")
+        if t.conclusion:
+            lines.append(f"* **Conclusió:** {t.conclusion}")
         lines.append("")
 
     if result.new_other_topics:
@@ -275,16 +284,22 @@ def parse_ordre_del_dia(text: str) -> MeetingAnalysisResult:
     mode = None  # None | 'topic' | 'altres'
     current_name: str | None = None
     current_summary_lines: list[str] = []
+    current_conclusion: str = ""
 
     def flush_topic():
-        nonlocal current_name, current_summary_lines
+        nonlocal current_name, current_summary_lines, current_conclusion
         if current_name is not None:
             summary = ' '.join(s for s in current_summary_lines if s)
             updated_topics.append(
-                ActiveTopicUpdate(topic_name=current_name, summary=summary)
+                ActiveTopicUpdate(
+                    topic_name=current_name,
+                    summary=summary,
+                    conclusion=current_conclusion,
+                )
             )
         current_name = None
         current_summary_lines = []
+        current_conclusion = ""
 
     started = False
     for line in text.splitlines():
@@ -310,7 +325,11 @@ def parse_ordre_del_dia(text: str) -> MeetingAnalysisResult:
             continue
         content = re.sub(r'^[\*\-]\s+', '', stripped)
         if mode == 'topic':
-            current_summary_lines.append(content)
+            cm = re.match(r'^\**\s*Conclusió\s*:\s*\**\s*(.*)$', content, re.IGNORECASE)
+            if cm:
+                current_conclusion = cm.group(1).strip().rstrip('*').strip()
+            else:
+                current_summary_lines.append(content)
         elif mode == 'altres':
             new_other_topics.append(content)
 
