@@ -391,6 +391,14 @@ class TestProcessedStore(unittest.TestCase):
         self.assertEqual(store["t1"]["dest_path"], "Seguiment/Joan")
         self.assertIn("archived_at", store["t1"])
 
+    def test_mark_archived_records_subject(self):
+        store = {}
+        mark_archived(store, "t1", 5, "Seguiment/Joan", subject="Oferta A10Pro")
+        self.assertEqual(store["t1"]["subject"], "Oferta A10Pro")
+        # Sense subject, la clau no s'escriu (entrades antigues idèntiques).
+        mark_archived(store, "t2", 1, "Proveïdors/EBV")
+        self.assertNotIn("subject", store["t2"])
+
     def test_load_corrupt_returns_empty(self):
         (self.tmp / "zConfig").mkdir()
         (self.tmp / "zConfig" / ".processed_threads.json").write_text("not json")

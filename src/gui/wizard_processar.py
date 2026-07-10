@@ -12,7 +12,8 @@ from PySide6.QtWidgets import (
 from vocabulary_loader import VocabularyLoader
 from workers import (
     DailyProcessorWorker,
-    MeetingAnalyzerWorker
+    MeetingAnalyzerWorker,
+    detach_worker,
 )
 
 
@@ -306,8 +307,14 @@ class WizardProcessar(QDialog):
         for email, name in speaker_emails.items():
             daily_transcript = daily_transcript.replace(email, name)
 
+        # Dos formats de línia de speaker:
+        #  - Teams (paste manual):  "HH:MM:SS Nom Cognom"
+        #  - Plaud CLI:             "[MM:SS - MM:SS] Nom Cognom: text"
         transcript_speakers = dict.fromkeys(
             re.findall(r'^\d{2}:\d{2}:\d{2} (.+)$', daily_transcript, re.MULTILINE)
+            + [s.strip() for s in re.findall(
+                r'^\[\d{1,2}:\d{2}(?::\d{2})? - \d{1,2}:\d{2}(?::\d{2})?\]\s*([^:\n]+):',
+                daily_transcript, re.MULTILINE)]
         )
         seen_names = {a['name'] for a in attendees}
         for speaker in transcript_speakers:
@@ -508,9 +515,7 @@ class WizardProcessar(QDialog):
                 )
                 if ret != QMessageBox.StandardButton.Yes:
                     return
-                self.worker_processing.quit()
-                self.worker_processing.wait(3000)
-                self._batch_queue.clear()
+                self._release_running_worker()
             # Recarrega la llista: el lot anterior ha renombrat notes (~ -> + / *)
             # i els Path cachejats a self.notes han quedat obsolets. Sense això,
             # re-processar llegiria fitxers ~ inexistents (FileNotFoundError).
@@ -545,6 +550,49 @@ class WizardProcessar(QDialog):
         elif idx == 1:
             self.accept()
 
+    def _release_running_worker(self):
+        """Abandona el worker en curs sense esperar-lo.
+
+        Un QThread dins de run() no es pot aturar (quit() només actua sobre
+        l'event loop, que aquí no existeix): el kickoff del LLM acabarà
+        igualment. Desconnectem els senyals perquè el resultat tardà no
+        escrigui al vault ni marqui files d'un lot posterior, i el desvinculem
+        del diàleg perquè tancar-lo no destrueixi un thread viu (crash de Qt).
+        La nota queda '~' i es pot reprocessar."""
+        try:
+            self.worker_processing.finished.disconnect()
+            self.worker_processing.error.disconnect()
+        except (RuntimeError, TypeError):
+            pass
+        detach_worker(self.worker_processing)
+        self.worker_processing = None
+        self._batch_queue.clear()
+
+    def _confirm_close(self) -> bool:
+        if self.worker_processing is None or not self.worker_processing.isRunning():
+            return True
+        ret = QMessageBox.question(
+            self, "Tancar?",
+            "Hi ha un processament en curs; si tanques, el seu resultat es "
+            "descartarà (la nota quedarà pendent de processar). Vols tancar "
+            "igualment?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        if ret != QMessageBox.StandardButton.Yes:
+            return False
+        self._release_running_worker()
+        return True
+
+    def closeEvent(self, event):
+        if self._confirm_close():
+            event.accept()
+        else:
+            event.ignore()
+
+    def reject(self):
+        if self._confirm_close():
+            super().reject()
+
     def _update_nav(self):
         idx = self._current_page()
         self.btn_back.setEnabled(idx == 1)
@@ -570,21 +618,9 @@ class WizardProcessar(QDialog):
         return {}
 
     def _extract_attendees_from_note(self, path) -> list[dict]:
-        content = path.read_text(encoding='utf-8')
-        if content.startswith('---'):
-            end = content.find('---', 3)
-            if end != -1:
-                frontmatter = yaml.safe_load(content[3:end])
-                if frontmatter and 'attendees' in frontmatter:
-                    attendees = []
-                    for entry in frontmatter['attendees']:
-                        name = entry.strip().strip('"').strip()
-                        if name.startswith('[[') and name.endswith(']]'):
-                            name = name[2:-2]
-                        attendees.append({'name': name})
-                    return attendees
-        return []
+        """Assistents del frontmatter en format DailyProcessor ([{'name': ...}]).
+        El parsing viu a ObsidianWriter.read_attendees (punt únic)."""
+        return [{'name': n} for n in self.obsidian.read_attendees(path)]
 
     def _format_attendees_string(self, note_path) -> str:
-        atts = self._extract_attendees_from_note(note_path)
-        return ', '.join(a['name'] for a in atts)
+        return self.obsidian.read_attendees_string(note_path)

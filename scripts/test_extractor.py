@@ -7,7 +7,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 load_dotenv()
 
-sys.path.insert(0, str(Path(__file__).parent / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))  # arrel del repo
 
 from project_definition_extractor import ProjectDefinitionExtractor, ProjectSource
 from project_models import coverage, format_markdown

@@ -12,7 +12,7 @@ import os
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src" / "gui"))
@@ -57,6 +57,62 @@ class TestWizardProcessarStale(unittest.TestCase):
         self.assertEqual(wizard.batch_results[0].status, 'skipped')
         # No s'ha intentat llegir la transcripció del fitxer inexistent.
         obsidian.read_transcript.assert_not_called()
+
+    def test_go_back_disconnects_running_worker(self):
+        # Un worker en curs no es pot aturar (QThread dins de run()); en tornar
+        # enrere cal desconnectar-ne els senyals perquè el resultat tardà no
+        # escrigui al vault ni marqui files d'un lot posterior.
+        wizard, _obsidian, _ = self._make_wizard([])
+        worker = MagicMock()
+        worker.isRunning.return_value = True
+        wizard.worker_processing = worker
+        wizard._batch_queue = [0, 1]
+        wizard.stack.setCurrentIndex(1)
+
+        from PySide6.QtWidgets import QMessageBox
+        with patch.object(QMessageBox, 'question',
+                          return_value=QMessageBox.StandardButton.Yes):
+            wizard._go_back()
+
+        worker.finished.disconnect.assert_called_once()
+        worker.error.disconnect.assert_called_once()
+        self.assertIsNone(wizard.worker_processing)
+        self.assertEqual(wizard._batch_queue, [])
+        self.assertEqual(wizard.stack.currentIndex(), 0)
+
+    def test_confirm_close_keeps_worker_when_user_says_no(self):
+        # Respondre "No" al diàleg de tancament ha de deixar el batch intacte.
+        wizard, _obsidian, _ = self._make_wizard([])
+        worker = MagicMock()
+        worker.isRunning.return_value = True
+        wizard.worker_processing = worker
+        wizard._batch_queue = [0]
+
+        from PySide6.QtWidgets import QMessageBox
+        with patch.object(QMessageBox, 'question',
+                          return_value=QMessageBox.StandardButton.No):
+            self.assertFalse(wizard._confirm_close())
+
+        worker.finished.disconnect.assert_not_called()
+        self.assertIs(wizard.worker_processing, worker)
+        self.assertEqual(wizard._batch_queue, [0])
+
+    def test_confirm_close_releases_worker_when_user_says_yes(self):
+        wizard, _obsidian, _ = self._make_wizard([])
+        worker = MagicMock()
+        worker.isRunning.return_value = True
+        wizard.worker_processing = worker
+        wizard._batch_queue = [0]
+
+        from PySide6.QtWidgets import QMessageBox
+        with patch.object(QMessageBox, 'question',
+                          return_value=QMessageBox.StandardButton.Yes):
+            self.assertTrue(wizard._confirm_close())
+
+        worker.finished.disconnect.assert_called_once()
+        worker.setParent.assert_called_once_with(None)
+        self.assertIsNone(wizard.worker_processing)
+        self.assertEqual(wizard._batch_queue, [])
 
     def test_go_back_reloads_notes(self):
         # En tornar a la pàgina 0, la llista es refresca (descarta paths obsolets).

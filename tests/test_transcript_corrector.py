@@ -61,6 +61,14 @@ class TestReplaceWholeWord(unittest.TestCase):
         )
         self.assertEqual(result, "Onea i HONOA")
 
+    def test_replacement_with_backslash_is_literal(self):
+        # La correcció s'ha d'inserir literalment: re.sub interpretaria '\1'
+        # o '\g' com a backreference i corrompria el text (o petaria).
+        result = TranscriptCorrector._replace_whole_word(
+            "el directori arrel", "arrel", r"C:\1\grup"
+        )
+        self.assertEqual(result, r"el directori C:\1\grup")
+
     def test_apply_uses_same_mechanism(self):
         """`apply()` ha de respectar límits de paraula igual que les memoritzades."""
         corrector = TranscriptCorrector.__new__(TranscriptCorrector)  # sense __init__ (evita LLM)

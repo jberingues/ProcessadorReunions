@@ -99,6 +99,38 @@ class TestAppendToYearNote(unittest.TestCase):
         self.assertIsInstance(out, Path)
         self.assertEqual(out.parent, self.subfolder)
 
+    def test_new_file_has_frontmatter(self):
+        out = self.writer.append_to_year_note(
+            self.note, "260520", "A10Pro", "", "contingut"
+        )
+        content = out.read_text(encoding="utf-8")
+        self.assertTrue(content.startswith("---\n"))
+        self.assertIn("type: resum_anual", content)
+        self.assertIn('serie: "A10Pro"', content)
+        self.assertIn("any: 2026", content)
+        # El frontmatter va abans del primer bloc.
+        self.assertLess(content.index("---"), content.index("## 260520"))
+
+    def test_existing_file_without_frontmatter_gets_it_prepended(self):
+        year_note = self.subfolder / "2026 A10Pro.md"
+        year_note.write_text("## 260501 - Antiga\n\nbloc antic\n", encoding="utf-8")
+        out = self.writer.append_to_year_note(
+            self.note, "260520", "A10Pro", "", "bloc nou"
+        )
+        content = out.read_text(encoding="utf-8")
+        self.assertTrue(content.startswith("---\n"))
+        self.assertIn("type: resum_anual", content)
+        self.assertIn("## 260501 - Antiga", content)  # contingut antic intacte
+        self.assertIn("## 260520 - A10Pro", content)
+
+    def test_frontmatter_not_duplicated_on_second_append(self):
+        self.writer.append_to_year_note(self.note, "260520", "A10Pro", "", "b1")
+        note2 = self.subfolder / "Reunions" / "260605_A10Pro~.md"
+        note2.write_text("(t2)", encoding="utf-8")
+        out = self.writer.append_to_year_note(note2, "260605", "A10Pro", "", "b2")
+        content = out.read_text(encoding="utf-8")
+        self.assertEqual(content.count("type: resum_anual"), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

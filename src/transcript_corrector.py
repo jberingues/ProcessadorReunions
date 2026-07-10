@@ -5,7 +5,7 @@ from pathlib import Path
 from crewai import Agent, Task, Crew, LLM
 from json_repair import repair_json
 
-from phonetic_filter import find_fuzzy_candidates, is_likely_phonetic
+from phonetic_filter import is_likely_phonetic
 
 
 class TranscriptCorrector:
@@ -32,13 +32,12 @@ class TranscriptCorrector:
         for original, correccio in self._load_local_memorized().items():
             transcript = self._replace_whole_word(transcript, original, correccio)
 
-        # Pre-pass fuzzy desactivat: empíricament afegia massa falsos positius
-        # (paraules catalanes comunes amb similitud >0.7 amb cognoms/termes,
-        # tipus `cosa→Coma`, `pots→Cots`, `Vila→Villa`). El LLM ja veu el
-        # vocabulari sencer; no cal duplicar amb una passada independent.
-        fuzzy_candidates = []
+        # (El pre-pass fuzzy es va eliminar: afegia massa falsos positius —
+        # paraules catalanes comunes amb similitud >0.7 amb cognoms/termes,
+        # tipus `cosa→Coma`, `pots→Cots`. El LLM ja veu el vocabulari sencer.
+        # `phonetic_filter.find_fuzzy_candidates` es conserva per experiments.)
 
-        # 3. LLM detecta nous errors (amb hints del pre-pass)
+        # 2. LLM detecta nous errors
         vocab_text = self._format_vocab()
 
         semantic_section = ''
@@ -171,13 +170,6 @@ Si no hi ha errors, retorna [].
         # substitucions semàntiques que el LLM ha proposat per compte propi).
         corrections = [c for c in corrections if is_likely_phonetic(c['original'], c['correccio'])]
 
-        # Fusió amb candidates fuzzy: afegim les que el LLM no ha recollit.
-        # Si el LLM ja ha proposat el mateix `original`, prevaleix (té millor context).
-        llm_originals = {c['original'] for c in corrections}
-        for cand in fuzzy_candidates:
-            if cand['original'] not in llm_originals and is_whole_word(cand['original'], transcript):
-                corrections.append(cand)
-
         return transcript, corrections
 
     def _kickoff_with_retry(self, crew: Crew, max_retries: int = 4):
@@ -207,9 +199,11 @@ Si no hi ha errors, retorna [].
         Evita coincidències dins de paraules més llargues (e.g. 'cabo' dins 'acabo')."""
         if not original:
             return text
+        # lambda: re.sub interpreta el 2n argument com a template (\1, \g<...>);
+        # una correcció amb '\' corrompria el text o llançaria error.
         return re.sub(
             r'(?<!\w)' + re.escape(original) + r'(?!\w)',
-            correccio,
+            lambda _m: correccio,
             text
         )
 
@@ -247,12 +241,3 @@ Si no hi ha errors, retorna [].
                 continue
             lines.append(f"{seccio}: {', '.join(paraules)}")
         return '\n'.join(lines)
-
-    def _flat_vocab_terms(self) -> list[str]:
-        """Llista plana de tots els termes del vocabulari (per al pre-pass fuzzy)."""
-        terms = []
-        for seccio, paraules in self.vocab.items():
-            if seccio == 'Configuració':
-                continue
-            terms.extend(paraules)
-        return terms

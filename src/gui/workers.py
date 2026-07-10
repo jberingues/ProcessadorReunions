@@ -57,6 +57,32 @@ def _retry_on_network_error(fn, *, attempts=3, base_delay=0.6):
             time.sleep(delay)
 
 
+# Workers "desvinculats": QThreads el resultat dels quals ja no interessa però
+# que no es poden aturar (run() no té event loop, quit() no hi fa res). Si el
+# seu pare (el diàleg) es destruís amb el thread encara viu, Qt avorta l'app
+# sencera ("QThread: Destroyed while thread is still running"). Els retenim
+# aquí fins al final de la sessió: un cop acabats són threads aturats, el cost
+# és negligible i mai n'hi ha més d'un grapat.
+_DETACHED_WORKERS: list = []
+
+
+def detach_worker(worker) -> None:
+    """Desvincula `worker` del seu pare i el reté viu fins que acabi.
+
+    El caller ha d'haver desconnectat abans els senyals que no vulgui rebre."""
+    worker.setParent(None)
+    _DETACHED_WORKERS.append(worker)
+
+
+def _is_timed_meeting(event: dict) -> bool:
+    """Reunió amb hora concreta i assistents.
+
+    Els events de dia sencer només tenen 'date' (no 'dateTime') i _parse_event
+    en trauria datetimes naive, que peten (TypeError) en ordenar-los o
+    aparellar-los amb els start_at tz-aware de Plaud."""
+    return 'attendees' in event and 'dateTime' in event.get('start', {})
+
+
 class CalendarWorker(QThread):
     finished = Signal(list)
     error = Signal(str)
@@ -76,14 +102,17 @@ class CalendarWorker(QThread):
             events = _retry_on_network_error(
                 lambda: self.calendar.service.events().list(
                     calendarId='primary',
-                    timeMin=time_min.isoformat() + 'Z',
-                    timeMax=time_max.isoformat() + 'Z',
+                    # .astimezone(): els límits arriben naive en hora local;
+                    # abans s'enviaven amb sufix 'Z' (com si fossin UTC) i la
+                    # finestra real quedava desplaçada l'offset del tz local.
+                    timeMin=time_min.astimezone().isoformat(),
+                    timeMax=time_max.astimezone().isoformat(),
                     singleEvents=True,
                     orderBy='startTime'
                 ).execute()
             ).get('items', [])
 
-            reunions = [self.calendar._parse_event(e) for e in events if 'attendees' in e]
+            reunions = [self.calendar._parse_event(e) for e in events if _is_timed_meeting(e)]
             self.finished.emit(reunions)
         except Exception as e:
             logger.exception("CalendarWorker error")
@@ -361,7 +390,13 @@ class EmailArchiveWorker(QThread):
                     extra_labels=dispatch.extra_labels,
                 )
                 rel_dest = str(dispatch.dest.relative_to(self.vault_path))
-                mark_archived(store, tid, len(thread['messages']), rel_dest)
+                subject = thread['messages'][0].get('subject') or ''
+                mark_archived(store, tid, len(thread['messages']), rel_dest,
+                              subject=subject)
+                # Desat incremental: si l'app mor a mig arxivat, el progrés
+                # queda persistit i la re-execució salta el que ja està fet.
+                if len(summary['archived_threads']) % 10 == 9:
+                    save_processed_store(self.vault_path, store)
                 summary['archived_threads'].append({
                     'thread_id': tid,
                     'dest': rel_dest,
@@ -370,7 +405,7 @@ class EmailArchiveWorker(QThread):
                     'extra_labels': dispatch.extra_labels,
                     'attachments': len(atts),
                     'messages': len(thread['messages']),
-                    'subject': thread['messages'][0].get('subject') or '',
+                    'subject': subject,
                     'note': note_path.name,
                 })
                 tag = " [TANCADA]" if dispatch.is_closed else ""

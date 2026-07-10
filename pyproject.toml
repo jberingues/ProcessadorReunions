@@ -17,8 +17,14 @@ dependencies = [
     "pydantic>=2.0.0",
     "json-repair>=0.30.0",
     "pyyaml>=6.0",
-    "faster-whisper>=1.0.0",
     "python-docx>=1.0.0",
     "pdfplumber>=0.11.0",
     "html2text>=2025.4.15",
+]
+
+# Dependències només per a experiments (scripts/), no per a l'app:
+#   uv sync --group experiments
+[dependency-groups]
+experiments = [
+    "faster-whisper>=1.0.0",   # scripts/transcribe_test_2.py
 ]

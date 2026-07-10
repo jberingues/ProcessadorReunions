@@ -16,7 +16,7 @@ from meeting_recording_matcher import Pair
 from plaud_client import PlaudRecording
 from widgets.pairing_view import PairingView
 from widgets.transcript_editor import TranscriptEditor
-from workers import PlaudTranscriptWorker
+from workers import PlaudTranscriptWorker, detach_worker
 
 
 # Unitat de feina: un parell confirmat o una gravació orfe que l'usuari ha
@@ -334,6 +334,8 @@ class WizardTranscripcio(QDialog):
         name = existing.name
         if name.endswith('~.md'):
             estat = 'ja corregida'
+        elif name.endswith('+.md'):
+            estat = 'pendent de consolidar'
         elif name.endswith('*.md'):
             estat = 'ja processada'
         else:
@@ -345,9 +347,10 @@ class WizardTranscripcio(QDialog):
         msg.setText(
             f"Ja existeix una nota per a aquesta reunió a la carpeta destí:\n\n"
             f"    {name}  ({estat})\n\n"
-            "Si la importes igualment i la nota existent està corregida o "
-            "processada, es crearà un DUPLICAT sense corregir (perquè el nom "
-            "difereix pel sufix). Si està sense corregir, se sobreescriurà."
+            "Si la importes igualment i la nota existent està corregida, "
+            "pendent de consolidar o processada, es crearà un DUPLICAT sense "
+            "corregir (perquè el nom difereix pel sufix). Si està sense "
+            "corregir, se sobreescriurà."
         )
         btn_skip = msg.addButton("Ometre aquest element", QMessageBox.ButtonRole.RejectRole)
         msg.addButton("Importar igualment", QMessageBox.ButtonRole.AcceptRole)
@@ -402,13 +405,35 @@ class WizardTranscripcio(QDialog):
     def _transcript_loading(self) -> bool:
         return self._transcript_worker is not None and self._transcript_worker.isRunning()
 
+    def _release_transcript_worker(self):
+        """Abandona el worker de transcripció si encara corre: desconnecta els
+        senyals (resultat obsolet) i el desvincula del diàleg perquè
+        destruir-lo amb el thread viu no avorti l'app."""
+        if self._transcript_worker is None:
+            return
+        try:
+            self._transcript_worker.finished.disconnect()
+            self._transcript_worker.error.disconnect()
+        except (RuntimeError, TypeError):
+            pass
+        if self._transcript_worker.isRunning():
+            detach_worker(self._transcript_worker)
+        self._transcript_worker = None
+
+    def closeEvent(self, event):
+        self._release_transcript_worker()
+        super().closeEvent(event)
+
+    def reject(self):
+        self._release_transcript_worker()
+        super().reject()
+
+    def accept(self):
+        self._release_transcript_worker()
+        super().accept()
+
     def _start_transcript_fetch(self):
-        if self._transcript_worker is not None:
-            try:
-                self._transcript_worker.finished.disconnect()
-                self._transcript_worker.error.disconnect()
-            except (RuntimeError, TypeError):
-                pass
+        self._release_transcript_worker()
         file_id = self._item_file_id(self.current_item)
         self.lbl_transcript_status.setText("Baixant transcripció de Plaud…")
         self.transcript_progress.setVisible(True)

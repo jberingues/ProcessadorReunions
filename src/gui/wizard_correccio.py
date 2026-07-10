@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt
 from vocabulary_loader import VocabularyLoader
 from transcript_corrector import TranscriptCorrector
-from workers import BatchCorrectionDetectWorker
+from workers import BatchCorrectionDetectWorker, detach_worker
 from widgets.inline_correction_editor import InlineCorrectionEditor
 
 
@@ -571,18 +571,38 @@ class WizardCorreccio(QDialog):
             super().reject()
 
     def _confirm_close(self):
-        # Abortar worker si en curs
-        if self.batch_worker and self.batch_worker.isRunning():
-            self.batch_worker.abort()
-            self.batch_worker.wait(3000)
-
-        # Avisar si hi ha notes detectades però no revisades
+        # Preguntar ABANS d'abortar: si l'usuari respon "No", el batch ha de
+        # continuar intacte (abans s'abortava primer i un "No" deixava el
+        # diàleg obert amb el batch mort en silenci).
+        running = self.batch_worker is not None and self.batch_worker.isRunning()
         detected = sum(1 for r in self.batch_results.values() if r.status == 'detected')
-        if detected > 0:
+        if running or detected:
+            parts = []
+            if running:
+                parts.append("El batch està en curs (s'aturarà).")
+            if detected:
+                parts.append(f"Hi ha {detected} notes processades sense revisar.")
             ret = QMessageBox.question(
-                self, "Notes sense revisar",
-                f"Hi ha {detected} notes processades sense revisar. Vols tancar igualment?",
+                self, "Tancar?",
+                " ".join(parts) + " Vols tancar igualment?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
             )
-            return ret == QMessageBox.StandardButton.Yes
+            if ret != QMessageBox.StandardButton.Yes:
+                return False
+        if running:
+            self.batch_worker.abort()
+            if not self.batch_worker.wait(3000):
+                # L'abort es comprova entre notes, però la crida LLM en curs
+                # pot trigar més de 3s: desconnectem els senyals i desvinculem
+                # el worker perquè destruir el diàleg no avorti l'app.
+                for sig in (self.batch_worker.note_started,
+                            self.batch_worker.note_finished,
+                            self.batch_worker.note_error,
+                            self.batch_worker.all_finished):
+                    try:
+                        sig.disconnect()
+                    except (RuntimeError, TypeError):
+                        pass
+                detach_worker(self.batch_worker)
+                self.batch_worker = None
         return True

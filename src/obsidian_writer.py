@@ -34,22 +34,6 @@ class ObsidianWriter:
         path.write_text(content, encoding='utf-8')
         return True
 
-    def _read_attendees_from_note(self, note_path: Path) -> str:
-        try:
-            import yaml
-            content = note_path.read_text(encoding='utf-8')
-            if not content.startswith('---'):
-                return ''
-            end = content.find('---', 3)
-            if end == -1:
-                return ''
-            fm = yaml.safe_load(content[3:end]) or {}
-            attendees = fm.get('attendees', [])
-            names = [a.strip('[]" ').replace('[[', '').replace(']]', '') for a in attendees]
-            return ', '.join(names)
-        except Exception:
-            return ''
-
     def append_email_to_provider_note(self, note_path: Path, date_str: str, email_title: str, summary: str, project_dir: Path = None):
         if project_dir is None:
             project_dir = note_path.parent.parent
@@ -91,11 +75,24 @@ class ObsidianWriter:
             Assistents: <attendees>     ← només si attendees no és buit
 
             <content_block>
+
+        El fitxer duu frontmatter (`type: resum_anual`, `serie`, `any`) perquè
+        sigui cercable de forma estructurada (Dataview / consultes LLM) sense
+        dependre del nom de fitxer. Si un anual existent no en té (creat abans
+        d'aquest canvi), se li prepèn sense tocar-ne el contingut.
         """
         year = 2000 + int(meeting_note_path.name[:2])
         subfolder = meeting_note_path.parent.parent
         series = series_name_for_file(subfolder.name)
         year_note = subfolder / f"{year} {series}.md"
+
+        frontmatter = (
+            "---\n"
+            "type: resum_anual\n"
+            f'serie: "{series}"\n'
+            f"any: {year}\n"
+            "---\n"
+        )
 
         header_lines = [f"## {date_label} - {title}"]
         if attendees:
@@ -104,10 +101,12 @@ class ObsidianWriter:
 
         if year_note.exists():
             existing = year_note.read_text(encoding='utf-8')
+            if not existing.startswith('---'):
+                existing = frontmatter + "\n" + existing.lstrip('\n')
             year_note.write_text(existing.rstrip() + "\n\n" + block, encoding='utf-8')
         else:
             year_note.parent.mkdir(parents=True, exist_ok=True)
-            year_note.write_text(block, encoding='utf-8')
+            year_note.write_text(frontmatter + "\n" + block, encoding='utf-8')
 
         return year_note
 
@@ -206,7 +205,7 @@ class ObsidianWriter:
         Retorna: (path_de_la_nota, list[paths_d'adjunts_desats]).
         Sobreescriu si la nota ja existeix (regeneració completa).
         """
-        from email_archiver import normalize_subject, place_attachment
+        from email_archiver import normalize_subject, place_attachment, trim_quoted_reply
         import email.utils as _email_utils
 
         extra_labels = extra_labels or []
@@ -266,7 +265,13 @@ class ObsidianWriter:
             suffix = " (resposta)" if i > 0 else ""
             header = f"## {dt_str} — {sender}{addr_part}{suffix}"
 
-            block_lines = [header, "", (m.get('body_text') or '').strip()]
+            body_text = (m.get('body_text') or '').strip()
+            if i > 0:
+                # Respostes: retallem l'històric citat (ja és a les seccions
+                # anteriors de la nota). El primer missatge es conserva sencer
+                # (en un reenviat, el contingut és sota les capçaleres inline).
+                body_text = trim_quoted_reply(body_text)
+            block_lines = [header, "", body_text]
             atts = msg_attachment_paths.get(m['message_id'], [])
             if atts:
                 block_lines.append("")
@@ -458,28 +463,35 @@ from: "{thread['from']}"
             path.write_text("### Altres temes\n", encoding='utf-8')
         return path
 
-    def read_attendees_string(self, note_path: Path) -> str:
-        """Llegeix els assistents del frontmatter d'una nota i els retorna com a
-        'Nom1, Nom2'. Resol wikilinks [[Nom]] i cometes. Buit si no n'hi ha."""
+    def read_attendees(self, note_path: Path) -> list[str]:
+        """Llegeix els assistents del frontmatter d'una nota com a llista de noms.
+        Resol wikilinks [[Nom]] i cometes. Llista buida si no n'hi ha.
+
+        Únic punt de parsing d'assistents: read_attendees_string i el wizard de
+        processat hi deleguen (abans hi havia tres implementacions paral·leles)."""
         content = Path(note_path).read_text(encoding='utf-8')
         if not content.startswith('---'):
-            return ''
+            return []
         end = content.find('---', 3)
         if end == -1:
-            return ''
+            return []
         try:
             frontmatter = yaml.safe_load(content[3:end])
         except Exception:
-            return ''
+            return []
         if not frontmatter or 'attendees' not in frontmatter:
-            return ''
+            return []
         names = []
         for entry in frontmatter['attendees'] or []:
             name = str(entry).strip().strip('"').strip()
             if name.startswith('[[') and name.endswith(']]'):
                 name = name[2:-2]
             names.append(name)
-        return ', '.join(names)
+        return names
+
+    def read_attendees_string(self, note_path: Path) -> str:
+        """Assistents del frontmatter com a 'Nom1, Nom2'. Buit si no n'hi ha."""
+        return ', '.join(self.read_attendees(note_path))
 
     def read_transcript(self, path: Path) -> str:
         content = path.read_text(encoding='utf-8')

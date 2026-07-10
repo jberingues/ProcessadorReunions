@@ -17,7 +17,7 @@ import email.utils
 import html as html_module
 import logging
 import re
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -163,7 +163,14 @@ class GmailFetcher:
         try:
             date_dt = email.utils.parsedate_to_datetime(date_str)
         except (TypeError, ValueError):
-            date_dt = datetime.now()
+            date_dt = None
+        # Sempre tz-aware: fetch_thread_full ordena els missatges per data i
+        # barrejar naive/aware llança TypeError (n'hi ha prou amb un missatge
+        # sense capçalera Date, o amb '-0000', per trencar tot el fil).
+        if date_dt is None:
+            date_dt = datetime.now(timezone.utc)
+        elif date_dt.tzinfo is None:
+            date_dt = date_dt.replace(tzinfo=timezone.utc)
         body_text, attachments = self._extract_body_and_attachments(msg['payload'], msg['id'])
         return {
             'message_id': msg['id'],

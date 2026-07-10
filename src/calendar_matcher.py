@@ -31,8 +31,14 @@ class CalendarMatcher:
                 creds = pickle.load(f)
         if not creds or not creds.valid:
             if creds and creds.expired and creds.refresh_token:
-                creds.refresh(Request())
-            else:
+                try:
+                    creds.refresh(Request())
+                except Exception:
+                    # Refresh token revocat o caducat (p.ex. mesos sense usar
+                    # l'app): sense això l'app no arrencava. Refem el flux
+                    # OAuth complet com si no hi hagués token.
+                    creds = None
+            if not creds or not creds.valid:
                 flow = InstalledAppFlow.from_client_secrets_file(
                     self.creds_file, SCOPES
                 )

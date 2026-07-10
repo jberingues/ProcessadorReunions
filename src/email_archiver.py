@@ -209,6 +209,67 @@ def pick_destination(thread_label_names: list[str], discovery: VaultDiscovery) -
     )
 
 
+# --- Retall de cites en respostes ---
+
+# Línia d'atribució de resposta: "El dia 9 de jul. 2026, X va escriure:",
+# "On Mon, Jul 9, 2026 ... wrote:", "El 9/7/26, X escribió:".
+_QUOTE_ATTRIBUTION_RE = re.compile(
+    r'^(El|On|Am|Le)\s.{0,200}(va escriure|escrigué|escribió|wrote|schrieb)\s*:\s*$',
+    re.IGNORECASE,
+)
+# Separador clàssic "-----Missatge original-----" (Outlook i derivats).
+_ORIGINAL_MSG_RE = re.compile(
+    r'^\s*-{2,}\s*(Missatge original|Original Message|Mensaje original)',
+    re.IGNORECASE,
+)
+# Bloc de capçaleres inline (Outlook): línia "De:/From:" seguida a prop
+# d'una "Enviat:/Sent:/Data:...". html2text pot envoltar les claus amb '*'.
+_HEADER_FIRST_RE = re.compile(r'^\s*\**(De|From|Von)\**\s*:\s*\S', re.IGNORECASE)
+_HEADER_FOLLOW_RE = re.compile(
+    r'^\s*\**(Enviat|Enviado|Sent|Data|Date|Per a|Para|To|A)\**\s*:', re.IGNORECASE,
+)
+
+
+def trim_quoted_reply(body: str) -> str:
+    """Retalla la cua citada d'una resposta (l'històric del fil que el client
+    de correu repeteix sota de cada missatge).
+
+    En un fil de N missatges, cada resposta duplica tot l'anterior: la nota
+    arxivada creix quadràticament i, com a font per a un LLM, és soroll. El
+    fil sencer ja queda recollit per les seccions per-missatge de la nota (i
+    l'original sempre és a Gmail).
+
+    Heurística de tall (la posició MÉS AMUNT que coincideixi):
+      - línia d'atribució "El dia ... va escriure:" / "On ... wrote:"
+      - separador "-----Missatge original-----"
+      - bloc de capçaleres inline "De:/From:" + "Enviat:/Sent:" a ≤3 línies
+      - tirada de ≥2 línies consecutives començant per '>'
+
+    Prudència: si el tall cau a la primera línia o deixa el cos buit, es
+    retorna el text sencer (millor soroll que perdre contingut). Pensat per a
+    RESPOSTES (2n missatge en endavant), no per a reenviats: en un reenviat
+    el contingut d'interès és justament sota les capçaleres inline.
+    """
+    lines = body.splitlines()
+    cut = None
+    for i, line in enumerate(lines):
+        if _QUOTE_ATTRIBUTION_RE.match(line) or _ORIGINAL_MSG_RE.match(line):
+            cut = i
+            break
+        if (_HEADER_FIRST_RE.match(line)
+                and any(_HEADER_FOLLOW_RE.match(l) for l in lines[i + 1:i + 4])):
+            cut = i
+            break
+        if (line.lstrip().startswith('>') and i + 1 < len(lines)
+                and lines[i + 1].lstrip().startswith('>')):
+            cut = i
+            break
+    if cut is None or cut == 0:
+        return body
+    trimmed = '\n'.join(lines[:cut]).rstrip()
+    return trimmed if trimmed.strip() else body
+
+
 # --- Normalització de noms ---
 
 _REPLY_PREFIX_RE = re.compile(r'^(re|fwd|fw|rv|rep)\s*:\s*', re.IGNORECASE)
@@ -321,12 +382,18 @@ def needs_archive(store: dict, thread_id: str, current_message_count: int) -> bo
     return current_message_count > entry.get('message_count', 0)
 
 
-def mark_archived(store: dict, thread_id: str, message_count: int, dest_rel_path: str) -> None:
+def mark_archived(store: dict, thread_id: str, message_count: int, dest_rel_path: str,
+                  subject: str = '') -> None:
+    """El `subject` és purament informatiu: fa el JSON autoexplicatiu quan
+    s'inspecciona (per depurar o per forçar un re-arxivat, cal poder saber
+    quin fil és cada thread_id sense anar a Gmail)."""
     store[thread_id] = {
         'message_count': message_count,
         'archived_at': datetime.now(timezone.utc).isoformat(),
         'dest_path': dest_rel_path,
     }
+    if subject:
+        store[thread_id]['subject'] = subject
 
 
 @dataclass

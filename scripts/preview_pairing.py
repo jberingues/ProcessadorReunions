@@ -6,7 +6,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-ROOT = Path(__file__).parent
+ROOT = Path(__file__).resolve().parent.parent  # arrel del repo (script viu a scripts/)
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "src" / "gui"))
 
