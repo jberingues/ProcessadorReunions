@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QProgressBar,
 )
 
+from window_drag import install_window_drag
 from consolidator import consolidate_pending_note
 
 
@@ -22,6 +23,7 @@ class WizardConsolidar(QDialog):
         self.obsidian = obsidian
         self.setWindowTitle("Consolidar reunions")
         self.setMinimumSize(800, 500)
+        install_window_drag(self)
 
         # Si s'obre des del tauler, es filtra a les notes triades i es
         # preseleccionen totes (l'usuari només ha de confirmar).

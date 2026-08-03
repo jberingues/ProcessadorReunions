@@ -19,6 +19,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from PySide6.QtCore import QDate, Qt
+from window_drag import install_window_drag
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QStackedWidget, QWidget,
     QPushButton, QLabel, QProgressBar, QDateEdit, QPlainTextEdit,
@@ -60,6 +61,7 @@ class WizardCorreus(QDialog):
         self.obsidian = obsidian
         self.setWindowTitle("Arxivar correus")
         self.setMinimumSize(900, 600)
+        install_window_drag(self)
 
         self.worker: EmailArchiveWorker | None = None
         self.log_path: Path | None = None

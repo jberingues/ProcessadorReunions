@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Optional, Union
 
 from PySide6.QtCore import Qt
+from window_drag import install_window_drag
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QStackedWidget, QWidget,
@@ -67,6 +68,7 @@ class WizardTranscripcio(QDialog):
         self.plaud_client = plaud_client
         self.setWindowTitle("Entrar transcripcions")
         self.setMinimumSize(1100, 700)
+        install_window_drag(self)
 
         self.work_queue: list[WorkItem] = []
         self.current_item: Optional[WorkItem] = None

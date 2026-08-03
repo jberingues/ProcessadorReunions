@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
     QTreeWidget, QTreeWidgetItem, QSplitter,
 )
 from PySide6.QtCore import Qt
+from window_drag import install_window_drag
 
 from workers import ProjectInitWorker
 from project_definition_extractor import ProjectSource
@@ -19,6 +20,7 @@ class WizardNouProjecte(QDialog):
         self.obsidian = obsidian
         self.setWindowTitle("Definir projecte")
         self.setMinimumSize(800, 600)
+        install_window_drag(self)
 
         self.selected_project = None
         self.sources: list[ProjectSource] = []

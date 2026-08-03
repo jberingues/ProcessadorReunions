@@ -5,6 +5,7 @@ from PySide6.QtWidgets import (
     QPushButton, QLabel, QMessageBox, QApplication, QAbstractItemView,
 )
 from PySide6.QtCore import Qt
+from window_drag import install_window_drag
 from calendar_matcher import CalendarMatcher
 from obsidian_writer import ObsidianWriter
 from plaud_client import PlaudClient
@@ -30,6 +31,7 @@ class MainWindow(QMainWindow):
         avail = QApplication.primaryScreen().availableGeometry()
         self.resize(avail.width(), 640)
         self.move(avail.left(), avail.top())
+        install_window_drag(self)
 
         self.vault_path = vault_path
         self.calendar = CalendarMatcher()
