@@ -19,7 +19,12 @@ Els experiments i utilitats de desenvolupament viuen a `scripts/` (proves de whi
 
 ## Required Configuration
 
-- `.env` — `OBSIDIAN_VAULT_PATH=/path/to/vault`, `LLM_MODELH=<litellm model id>`. Opcional: `EMAIL_INCLUDE_SINCRO=true` per incloure `Sincronització/` en l'arxivat de correus.
+- `.env` — `OBSIDIAN_VAULT_PATH=/path/to/vault` + config LLM (vegeu `src/llm_config.py`):
+  - `LLM_MODELH=<litellm model id>` — tier **hard**: anàlisi de reunions (analyze/summarize) i extracció de definició de projectes.
+  - `LLM_MODELL=<litellm model id>` — tier **light**: extracció mecànica (correcció de transcripcions, daily scrum, resum de correus). Si falta, cau a `LLM_MODELH`.
+  - `LLM_REASONING_EFFORT` (default `low`) — esforç de raonament per a models que en tenen (gpt-5.x): el default del proveïdor (`medium`) crema tokens de raonament facturats com a output sense guany en tasques d'extracció. Buit = default del proveïdor.
+  - Opcional: `EMAIL_INCLUDE_SINCRO=true` per incloure `Sincronització/` en l'arxivat de correus; `GENERA_LOG=TRUE` per registrar els prompts del corrector.
+  - **Consum**: cada crida LLM escriu una línia `LLM ús [<etiqueta>]: prompt/completion/total` a `data/app.log` (helpers `log_crew_usage`/`log_completion_usage`) — per veure on va el cost i validar canvis de model/esforç.
 - `config/google_credentials.json` — OAuth2 (Calendar + Gmail).
 - `config/token.pickle` — auto-generat al primer OAuth. **Scopes** (`calendar_matcher.py:SCOPES`): `calendar.readonly`, `directory.readonly`, `gmail.readonly`, `gmail.labels`. Split Gmail intencionat: `readonly` per llegir fils/adjunts; `labels` només per crear/editar etiquetes (no aplicar-les). **Si canvies scopes: `rm config/token.pickle` i refés el flux OAuth.** Si el refresh token està revocat/caducat, `_auth` cau automàticament al flux OAuth complet (no cal esborrar el pickle a mà).
 - **Plaud CLI**: `npm install -g @plaud-ai/cli` + `plaud login` un cop. Binari al `PATH`.

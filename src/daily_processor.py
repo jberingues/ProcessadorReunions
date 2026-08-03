@@ -1,7 +1,8 @@
-import os
 import re
 from pydantic import BaseModel
 from crewai import Agent, Task, Crew, LLM
+
+from llm_config import log_crew_usage, model_light, reasoning_effort
 
 
 class PersonDaily(BaseModel):
@@ -18,7 +19,9 @@ class DailyScrumResult(BaseModel):
 class DailyProcessor:
     def __init__(self, vocab: dict, model: str = None):
         self.vocab = vocab
-        self.llm = LLM(model=model or os.getenv('LLM_MODELH'), drop_params=True)
+        # Tier light: extreure ahir/avui per persona és extracció mecànica.
+        self.llm = LLM(model=model or model_light(), drop_params=True,
+                       reasoning_effort=reasoning_effort())
 
     def process(self, transcript: str, attendees: list[dict]) -> DailyScrumResult:
         vocab_text = self._format_vocab()
@@ -71,6 +74,7 @@ INSTRUCCIONS:
         print("  → Agent Daily Scrum iniciat...")
         result = crew.kickoff()
         print("  ✓ Agent Daily Scrum finalitzat\n")
+        log_crew_usage('sincro', crew)
         return result.pydantic
 
     def format_markdown(self, result: DailyScrumResult, meeting_title: str, date_str: str) -> str:

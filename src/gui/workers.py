@@ -1,4 +1,3 @@
-import os
 import errno
 import socket
 import time
@@ -451,8 +450,16 @@ class SummaryWorker(QThread):
 
     def run(self):
         try:
+            from llm_config import log_completion_usage, model_light, reasoning_effort
+            # Tier light: resumir un correu és extracció mecànica.
+            kwargs = {}
+            effort = reasoning_effort()
+            if effort:
+                kwargs['reasoning_effort'] = effort
             response = litellm.completion(
-                model=os.getenv('LLM_MODELH'),
+                model=model_light(),
+                drop_params=True,
+                **kwargs,
                 messages=[{
                     "role": "user",
                     "content": (
@@ -466,6 +473,7 @@ class SummaryWorker(QThread):
                     )
                 }]
             )
+            log_completion_usage('resum correu', response)
             summary = response.choices[0].message.content.strip()
             self.finished.emit(summary)
         except Exception as e:

@@ -1,8 +1,9 @@
-import os
 import re
 from pathlib import Path
 from pydantic import BaseModel
 from crewai import Agent, Task, Crew, LLM
+
+from llm_config import log_crew_usage, model_hard, reasoning_effort
 
 
 class ActiveTopicUpdate(BaseModel):
@@ -31,7 +32,10 @@ def parse_active_topics(temes_oberts_path: Path) -> list[str]:
 
 class MeetingAnalyzer:
     def __init__(self, model: str = None):
-        self.llm = LLM(model=model or os.getenv('LLM_MODELH'), drop_params=True)
+        # Tier hard: la qualitat dels resums acaba a la memòria permanent
+        # (Ordre del dia → Temes oberts + anual).
+        self.llm = LLM(model=model or model_hard(), drop_params=True,
+                       reasoning_effort=reasoning_effort())
 
     def analyze(self, topics: list[str], transcript: str, brief: bool = False) -> MeetingAnalysisResult:
         topics_list = '\n'.join(f'- {t}' for t in topics)
@@ -76,6 +80,7 @@ INSTRUCCIONS:
         print("  → Agent analista iniciat...")
         result = crew.kickoff()
         print("  ✓ Agent analista finalitzat\n")
+        log_crew_usage('analisi seguiment', crew)
         return result.pydantic
 
     def summarize(self, transcript: str, brief: bool = False) -> MeetingAnalysisResult:
@@ -125,6 +130,7 @@ INSTRUCCIONS:
         print("  → Agent de resum iniciat...")
         result = crew.kickoff()
         print("  ✓ Agent de resum finalitzat\n")
+        log_crew_usage('resum lliure', crew)
         return result.pydantic
 
 

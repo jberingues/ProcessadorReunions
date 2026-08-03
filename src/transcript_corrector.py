@@ -5,6 +5,7 @@ from pathlib import Path
 from crewai import Agent, Task, Crew, LLM
 from json_repair import repair_json
 
+from llm_config import log_crew_usage, model_light, reasoning_effort
 from phonetic_filter import is_likely_phonetic
 
 
@@ -13,7 +14,9 @@ class TranscriptCorrector:
                  threshold_auto: float = 0.85):
         self.vocab = vocab
         self.semantic_memory_path = Path(semantic_memory_path) if semantic_memory_path else None
-        self.llm = LLM(model=model or os.getenv('LLM_MODELH'), drop_params=True)
+        # Tier light: detecció d'errors = extracció mecànica, no cal el model gran.
+        self.llm = LLM(model=model or model_light(), drop_params=True,
+                       reasoning_effort=reasoning_effort())
         self.threshold_auto = threshold_auto
 
     def detect(self, transcript: str, reference_summary: str = None, semantic_context=None) -> tuple[str, list[dict]]:
@@ -142,6 +145,7 @@ Si no hi ha errors, retorna [].
 
         crew = Crew(agents=[agent], tasks=[task], verbose=False)
         result = self._kickoff_with_retry(crew)
+        log_crew_usage('correccio', crew)
 
         raw = result.raw if hasattr(result, 'raw') else str(result)
         corrections = repair_json(raw, return_objects=True) or []

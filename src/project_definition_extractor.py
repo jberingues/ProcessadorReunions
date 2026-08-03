@@ -7,13 +7,14 @@ builds a unified context and invokes an LLM to produce a ProjectDefinition.
 
 from __future__ import annotations
 
-import os
 import re
 import logging
 
 import litellm
 from json_repair import repair_json
 from pydantic import BaseModel
+
+from llm_config import log_completion_usage, model_hard, reasoning_effort
 
 from project_models import (
     ExtractedField,
@@ -100,7 +101,8 @@ class ProjectDefinitionExtractor:
     """Extracts a ProjectDefinition from source materials via LLM."""
 
     def __init__(self, model: str | None = None):
-        self.model = model or os.getenv("LLM_MODELH")
+        # Tier hard: la definició del projecte és el document fundacional.
+        self.model = model or model_hard()
 
     def extract(self, project_name: str, sources: list[ProjectSource]) -> ProjectDefinition:
         """Extract a ProjectDefinition from the given sources.
@@ -142,7 +144,13 @@ class ProjectDefinitionExtractor:
 
     def _call_llm(self, messages: list[dict]) -> str:
         """Invoke the LLM and return the raw response text."""
-        response = litellm.completion(model=self.model, messages=messages)
+        kwargs = {}
+        effort = reasoning_effort()
+        if effort:
+            kwargs['reasoning_effort'] = effort
+        response = litellm.completion(model=self.model, messages=messages,
+                                      drop_params=True, **kwargs)
+        log_completion_usage('projecte nou', response)
         return response.choices[0].message.content.strip()
 
     def _parse_response(self, raw: str, project_name: str) -> ProjectDefinition:
