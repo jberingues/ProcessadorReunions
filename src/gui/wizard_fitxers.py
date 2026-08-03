@@ -6,7 +6,6 @@ from PySide6.QtWidgets import (
     QLabel, QMessageBox, QFileDialog, QLineEdit
 )
 from PySide6.QtCore import Qt
-from window_drag import install_window_drag
 
 
 class WizardFitxers(QDialog):
@@ -15,7 +14,6 @@ class WizardFitxers(QDialog):
         self.obsidian = obsidian
         self.setWindowTitle("Entrar fitxers")
         self.setMinimumSize(700, 500)
-        install_window_drag(self)
 
         self.selected_file: Path | None = None
         self.selected_target_dir: Path | None = None

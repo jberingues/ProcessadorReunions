@@ -9,7 +9,6 @@ from PySide6.QtWidgets import (
     QProgressBar, QMessageBox, QHeaderView, QWidget, QAbstractItemView,
     QComboBox
 )
-from window_drag import install_window_drag
 from vocabulary_loader import VocabularyLoader
 from workers import (
     DailyProcessorWorker,
@@ -65,7 +64,6 @@ class WizardProcessar(QDialog):
         self.obsidian = obsidian
         self.setWindowTitle("Processar reunions")
         self.setMinimumSize(800, 550)
-        install_window_drag(self)
 
         # Si s'obre des del tauler, es filtra a les notes triades i es
         # preseleccionen totes (l'usuari només ajusta el tipus i executa).

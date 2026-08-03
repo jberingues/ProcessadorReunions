@@ -8,7 +8,6 @@ from PySide6.QtWidgets import (
     QProgressBar, QPlainTextEdit, QMessageBox, QHeaderView
 )
 from PySide6.QtCore import Qt
-from window_drag import install_window_drag
 from PySide6.QtGui import QFontDatabase
 from vocabulary_loader import VocabularyLoader
 from workers import MeetingAnalyzerWorker, SummaryWorker
@@ -21,7 +20,6 @@ class WizardProcessarCorreus(QDialog):
         self.obsidian = obsidian
         self.setWindowTitle("Processar correus")
         self.setMinimumSize(750, 550)
-        install_window_drag(self)
 
         self.notes = []
         self.selected_note = None

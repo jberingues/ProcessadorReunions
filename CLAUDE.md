@@ -81,6 +81,8 @@ Reunions/
 | Processar correus | `wizard_processar_correus.py` | **Model antic** (`Estat actual.md`, `Històric.md`, `<NomProveïdor>.md`). **Pendent d'adaptar** al model homogeni. |
 | Crear un projecte nou | `wizard_nou_projecte.py` | Nota corregida + fitxers + carpeta projecte → omple `Data inici` i `## Resum` via LLM. Marca la reunió processada. |
 
+**Gotcha — obrir wizards (macOS sheet inamovible)**: `main_window` obre tots els wizards amb `wizard.setWindowModality(Qt.ApplicationModal)` + `wizard.show()`, **no** amb `wizard.open()`. `QDialog.open()` força `WindowModal` (modal al pare) i a macOS un diàleg window-modal es dibuixa com un **sheet enganxat a la barra de títol del pare** → no es pot moure amb el ratolí. `ApplicationModal` + `show()` manté el flux no-bloquejant (`finished.connect(self._wizard_closed)`) però és una finestra normal moible. **No usar `.open()` per obrir wizards.**
+
 ## Architecture — Key Modules (`src/`)
 
 Resum funcional; per a signatures exactes llegeix el mòdul. Es destaquen només els punts no-obvis.

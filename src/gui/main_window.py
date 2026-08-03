@@ -5,7 +5,6 @@ from PySide6.QtWidgets import (
     QPushButton, QLabel, QMessageBox, QApplication, QAbstractItemView,
 )
 from PySide6.QtCore import Qt
-from window_drag import install_window_drag
 from calendar_matcher import CalendarMatcher
 from obsidian_writer import ObsidianWriter
 from plaud_client import PlaudClient
@@ -31,7 +30,6 @@ class MainWindow(QMainWindow):
         avail = QApplication.primaryScreen().availableGeometry()
         self.resize(avail.width(), 640)
         self.move(avail.left(), avail.top())
-        install_window_drag(self)
 
         self.vault_path = vault_path
         self.calendar = CalendarMatcher()
@@ -135,7 +133,8 @@ class MainWindow(QMainWindow):
         self._disable_all()
         wizard = WizardTranscripcio(self.calendar, self.obsidian, self.plaud_client, self)
         wizard.finished.connect(self._wizard_closed)
-        wizard.open()
+        wizard.setWindowModality(Qt.ApplicationModal)
+        wizard.show()
 
     def _open_processar(self):
         notes = self._selected_notes(self.list_processar)
@@ -145,7 +144,8 @@ class MainWindow(QMainWindow):
         wizard = WizardProcessar(self.calendar, self.obsidian, self,
                                  preselected_paths={n['path'] for n in notes})
         wizard.finished.connect(self._wizard_closed)
-        wizard.open()
+        wizard.setWindowModality(Qt.ApplicationModal)
+        wizard.show()
 
     def _open_consolidar(self):
         notes = self._selected_notes(self.list_consolidar)
@@ -155,19 +155,22 @@ class MainWindow(QMainWindow):
         wizard = WizardConsolidar(self.obsidian, self,
                                   preselected_paths={n['path'] for n in notes})
         wizard.finished.connect(self._wizard_closed)
-        wizard.open()
+        wizard.setWindowModality(Qt.ApplicationModal)
+        wizard.show()
 
     def _open_nou_projecte(self):
         self._disable_all()
         wizard = WizardNouProjecte(self.calendar, self.obsidian, self)
         wizard.finished.connect(self._wizard_closed)
-        wizard.open()
+        wizard.setWindowModality(Qt.ApplicationModal)
+        wizard.show()
 
     def _open_correus(self):
         self._disable_all()
         wizard = WizardCorreus(self.gmail_fetcher, self.obsidian, self)
         wizard.finished.connect(self._wizard_closed)
-        wizard.open()
+        wizard.setWindowModality(Qt.ApplicationModal)
+        wizard.show()
 
     def _sync_gmail_labels(self):
         """Sincronitza les etiquetes vault → Gmail. Sense diàleg: el resultat
@@ -212,13 +215,15 @@ class MainWindow(QMainWindow):
         self._disable_all()
         wizard = WizardFitxers(self.obsidian, self)
         wizard.finished.connect(self._wizard_closed)
-        wizard.open()
+        wizard.setWindowModality(Qt.ApplicationModal)
+        wizard.show()
 
     def _open_processar_correus(self):
         self._disable_all()
         wizard = WizardProcessarCorreus(self.calendar, self.obsidian, self)
         wizard.finished.connect(self._wizard_closed)
-        wizard.open()
+        wizard.setWindowModality(Qt.ApplicationModal)
+        wizard.show()
 
     def _open_correccio(self):
         notes = self._selected_notes(self.list_correccio)
@@ -228,7 +233,8 @@ class MainWindow(QMainWindow):
         wizard = WizardCorreccio(self.obsidian, self,
                                  preselected_paths={n['path'] for n in notes})
         wizard.finished.connect(self._wizard_closed)
-        wizard.open()
+        wizard.setWindowModality(Qt.ApplicationModal)
+        wizard.show()
 
     def _refresh_dashboard(self):
         """Re-escaneja el vault i reomple les 3 columnes del tauler. Els finders

@@ -6,7 +6,6 @@ from PySide6.QtWidgets import (
     QCheckBox
 )
 from PySide6.QtCore import Qt
-from window_drag import install_window_drag
 from vocabulary_loader import VocabularyLoader
 from transcript_corrector import TranscriptCorrector
 from workers import BatchCorrectionDetectWorker, detach_worker
@@ -30,7 +29,6 @@ class WizardCorreccio(QDialog):
         self.obsidian = obsidian
         self.setWindowTitle("Correcció transcripcions")
         self.setMinimumSize(800, 600)
-        install_window_drag(self)
 
         # Si s'obre des del tauler, es filtra a les notes triades i es
         # preseleccionen totes (l'usuari només ajusta els checkboxes i executa).
