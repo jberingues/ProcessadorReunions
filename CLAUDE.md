@@ -124,6 +124,7 @@ Resum funcional; per a signatures exactes llegeix el mòdul. Es destaquen només
 - **Re-imports duplicats**: en confirmar carpeta, `_confirm_if_note_exists()` → `find_existing_note` (3 sufixos). Si existeix: QMessageBox **Ometre**(default)/**Importar igualment**. Cal perquè `PairingView` recarrega el dia sense saber què ja es va importar.
 - **Workers stale**: `PlaudTranscriptWorker` emet `file_id`; si l'usuari ha avançat, s'ignora.
 - **Enrere**: només a pàg.2 (re-triar carpeta sense reaparellar). No es torna a pàg.0 un cop iniciada la iteració.
+- **Columna Plaud buida**: la causa habitual és el token del CLI caducat (`plaud recent` → `[AUTH_FAILED] Token invalid or expired`) → `plaud login`. El `status_label` del `PairingView` ho diu, però els avisos de càrrega (auth, error Plaud, error Calendar) es guarden a `_load_warnings` i es repinten a `_maybe_finalize` via `_compose_status` **precisament perquè** el recompte final els trepitjava i semblava que el dia no tenia gravacions.
 
 ## Wizard Processar — Flux (fase 1)
 

@@ -87,6 +87,10 @@ class PairingView(QWidget):
         self._cal_done = False
         self._plaud_done = False
         self._syncing = False
+        # Avisos de la càrrega en curs (error de calendari, Plaud no autenticat…).
+        # `_maybe_finalize` els reescriu junt amb el recompte perquè no quedin
+        # trepitjats pel resum final (vegeu `_compose_status`).
+        self._load_warnings: list[str] = []
 
         self._build_ui()
 
@@ -187,6 +191,7 @@ class PairingView(QWidget):
         self.pairs = []
         self._cal_done = False
         self._plaud_done = False
+        self._load_warnings = []
         self._refresh_tables()
         self._refresh_pairs_list()
 
@@ -218,7 +223,7 @@ class PairingView(QWidget):
         self._maybe_finalize()
 
     def _on_cal_error(self, msg: str):
-        self.status_label.setText(f"Error calendari: {msg}")
+        self._add_warning(f"Error calendari: {msg}")
         self._cal_done = True
         self._maybe_finalize()
 
@@ -228,20 +233,39 @@ class PairingView(QWidget):
         self._maybe_finalize()
 
     def _on_plaud_error(self, msg: str):
-        self.status_label.setText(f"Error Plaud: {msg}")
+        self._add_warning(f"Error Plaud: {msg}")
         self.recordings = []
         self._plaud_done = True
         self.plaud_error.emit(msg)
         self._maybe_finalize()
 
     def _on_plaud_not_auth(self):
-        self.status_label.setText(
+        self._add_warning(
             "Plaud no autenticat — executa `plaud login` al terminal i recarrega."
         )
         self.recordings = []
         self._plaud_done = True
         self.plaud_not_authenticated.emit()
         self._maybe_finalize()
+
+    def _add_warning(self, msg: str):
+        """Registra un avís de la càrrega i el mostra de seguida.
+
+        Els avisos es conserven a `_load_warnings` perquè `_maybe_finalize`
+        els torni a pintar amb el recompte final: si només fèiem `setText`
+        aquí, el resum "N reunions · N gravacions · N parells" els esborrava
+        a l'instant i semblava simplement que no hi havia gravacions.
+        """
+        if msg not in self._load_warnings:
+            self._load_warnings.append(msg)
+        self.status_label.setText(self._compose_status())
+
+    def _compose_status(self, counts: str = "") -> str:
+        """Avisos primer (el que cal actuar), recompte a l'última línia."""
+        lines = [*self._load_warnings]
+        if counts:
+            lines.append(counts)
+        return "\n".join(lines)
 
     def _maybe_finalize(self):
         if not (self._cal_done and self._plaud_done):
@@ -257,10 +281,10 @@ class PairingView(QWidget):
         # Auto-match
         result = match(self.events, self.recordings)
         self.pairs = list(result.pairs)
-        self.status_label.setText(
+        self.status_label.setText(self._compose_status(
             f"{len(self.events)} reunions · {len(self.recordings)} gravacions · "
             f"{len(self.pairs)} parells (auto/suggerit)"
-        )
+        ))
         self._refresh_tables()
         self._refresh_pairs_list()
         self.loaded.emit()
