@@ -175,6 +175,91 @@ class BatchCorrectionDetectWorker(QThread):
         self.all_finished.emit()
 
 
+class BatchCorrectionPrepareWorker(QThread):
+    """Prepara el batch de correcció: tota la I/O del vault, fora de la GUI.
+
+    Per cada nota cal llegir la transcripció, els 2 darrers blocs del resum
+    anual (referència) i, si la sèrie en té, (re)construir la memòria semàntica
+    — que llegeix totes les notes processades de la sèrie. Són desenes de
+    fitxers del vault, que sovint viu a Google Drive (CloudStorage): cada
+    lectura pot ser una descàrrega i quedar-se minuts bloquejada si la xarxa
+    trontolla. Fent-ho al fil principal (com abans) la finestra quedava
+    congelada sense cap pista del que passava.
+    """
+    note_prepared = Signal(int, object)   # índex de fila, dict de tasca
+    note_error = Signal(int, str)         # índex de fila, missatge
+    progress = Signal(int, int)           # preparades, total
+    failed = Signal(str)                  # error global (vocabulari il·legible)
+    all_finished = Signal()
+
+    def __init__(self, obsidian, notes: list, vocab_path, parent=None):
+        super().__init__(parent)
+        self.obsidian = obsidian
+        self.notes = notes
+        self.vocab_path = vocab_path
+        self._abort = False
+
+    def abort(self):
+        self._abort = True
+
+    def run(self):
+        # Imports diferits: TranscriptCorrector arrossega crewai i workers.py
+        # es carrega a l'arrencada de l'app.
+        from vocabulary_loader import VocabularyLoader
+        from transcript_corrector import TranscriptCorrector
+
+        try:
+            loader = VocabularyLoader(self.vocab_path)
+            vocab = loader.load()
+            config = loader.load_config()
+            threshold_auto = float(config.get('threshold_auto', '0.85'))
+        except Exception as e:
+            logger.exception("BatchCorrectionPrepareWorker: error llegint el vocabulari")
+            self.failed.emit(str(e))
+            return
+
+        total = len(self.notes)
+        for idx, note in enumerate(self.notes):
+            if self._abort:
+                break
+            try:
+                meeting_dir = note['path'].parent.parent
+                corrector = TranscriptCorrector(
+                    vocab,
+                    semantic_memory_path=meeting_dir / 'semantic_memory.json',
+                    threshold_auto=threshold_auto,
+                )
+                transcript = self.obsidian.read_transcript(note['path'])
+
+                # Referència = els 2 darrers resums anuals (validats per l'usuari
+                # a la fase 2), no la transcripció corregida: aquesta pot tenir
+                # errors residuals (auto-aplicada sense revisar) i, com que al
+                # prompt es presenta com a "ja correcte", suprimiria correccions.
+                reference_summary = self.obsidian.read_recent_year_blocks(note['path'], n=2)
+
+                semantic_context = None
+                if meeting_dir.name != 'Reunions':
+                    from semantic_memory_builder import SemanticMemoryBuilder
+                    from semantic_context_retriever import SemanticContextRetriever
+                    SemanticMemoryBuilder().build_if_stale(meeting_dir)
+                    semantic_context = SemanticContextRetriever().load(meeting_dir)
+
+                self.note_prepared.emit(idx, {
+                    'index': idx,
+                    'corrector': corrector,
+                    'transcript': transcript,
+                    'reference_summary': reference_summary,
+                    'semantic_context': semantic_context,
+                    'meeting_dir': meeting_dir,
+                })
+            except Exception as e:
+                logger.exception("BatchCorrectionPrepareWorker error a nota index=%d", idx)
+                self.note_error.emit(idx, str(e))
+            self.progress.emit(idx + 1, total)
+
+        self.all_finished.emit()
+
+
 class DailyProcessorWorker(QThread):
     finished = Signal(object, str)
     error = Signal(str)

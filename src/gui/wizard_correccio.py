@@ -8,14 +8,16 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt
 from vocabulary_loader import VocabularyLoader
 from transcript_corrector import TranscriptCorrector
-from workers import BatchCorrectionDetectWorker, detach_worker
+from workers import (
+    BatchCorrectionDetectWorker, BatchCorrectionPrepareWorker, detach_worker
+)
 from widgets.inline_correction_editor import InlineCorrectionEditor
 
 
 @dataclass
 class BatchNoteResult:
     note: dict
-    status: str = 'pending'  # pending | detecting | detected | reviewed | error
+    status: str = 'pending'  # preparing | pending | detecting | detected | reviewed | error
     transcript: str | None = None
     corrections: list = field(default_factory=list)
     error_msg: str | None = None
@@ -36,6 +38,8 @@ class WizardCorreccio(QDialog):
         self.notes = []
         self.batch_results: dict[int, BatchNoteResult] = {}
         self.batch_worker: BatchCorrectionDetectWorker | None = None
+        self.prepare_worker: BatchCorrectionPrepareWorker | None = None
+        self._prepared_tasks: list = []
         self.reviewing_idx: int | None = None
         self.inline_editor: InlineCorrectionEditor | None = None
 
@@ -187,83 +191,95 @@ class WizardCorreccio(QDialog):
         self.skip_review = self.chk_skip_review.isChecked()
         self.save_comparison = self.chk_save_comparison.isChecked()
 
-        vocab_path = self.obsidian.vault / 'Reunions' / 'zConfig' / 'Vocabulari.md'
-        loader = VocabularyLoader(vocab_path)
-        vocab = loader.load()
-        config = loader.load_config()
-        threshold_auto = float(config.get('threshold_auto', '0.85'))
-
         self.batch_results.clear()
-        tasks = []
+        self._prepared_tasks = []
 
         self.table_batch.setRowCount(len(selected_notes))
         self.progress_batch.setRange(0, len(selected_notes))
         self.progress_batch.setValue(0)
-
         for idx, note in enumerate(selected_notes):
             self.table_batch.setItem(idx, 0, QTableWidgetItem(note['date']))
             self.table_batch.setItem(idx, 1, QTableWidgetItem(note['title']))
-            self.table_batch.setItem(idx, 2, QTableWidgetItem("Pendent"))
+            self.table_batch.setItem(idx, 2, QTableWidgetItem("Preparant..."))
             self.table_batch.setItem(idx, 3, QTableWidgetItem("—"))
+            self.batch_results[idx] = BatchNoteResult(note=note, status='preparing')
+
+        self.lbl_batch_status.setText(
+            f"Preparant 0/{len(selected_notes)} (llegint el vault)..."
+        )
+
+        # La preparació (vocabulari, transcripcions, resums anuals de
+        # referència, memòria semàntica) és tota I/O del vault i va en un
+        # worker: amb el vault a Google Drive una lectura pot trigar minuts i
+        # abans congelava la finestra sencera (cap repintat, cap avís).
+        vocab_path = self.obsidian.vault / 'Reunions' / 'zConfig' / 'Vocabulari.md'
+        self.prepare_worker = BatchCorrectionPrepareWorker(
+            self.obsidian, selected_notes, vocab_path, self
+        )
+        self.prepare_worker.note_prepared.connect(self._on_note_prepared)
+        self.prepare_worker.note_error.connect(self._on_note_error)
+        self.prepare_worker.progress.connect(self._on_prepare_progress)
+        self.prepare_worker.failed.connect(self._on_prepare_failed)
+        self.prepare_worker.all_finished.connect(self._on_prepare_finished)
+        self.prepare_worker.start()
+        self._update_nav()
+
+    def _on_note_prepared(self, idx, task):
+        result = self.batch_results[idx]
+        result.status = 'pending'
+        result.transcript = task['transcript']
+        result.corrector = task['corrector']
+        result.meeting_dir = task['meeting_dir']
+        self.table_batch.setItem(idx, 2, QTableWidgetItem("Pendent"))
+
+        # Còpia 'original' per comparació: la transcripció tal com era abans de
+        # qualsevol modificació (aliases memoritzats, correccions LLM, revisió
+        # manual). Va a /tmp (disc local), no al vault.
+        if self.save_comparison:
             try:
-                meeting_dir = note['path'].parent.parent
-                semantic_memory_path = meeting_dir / 'semantic_memory.json'
-                corrector = TranscriptCorrector(vocab, semantic_memory_path=semantic_memory_path,
-                                               threshold_auto=threshold_auto)
-                transcript = self.obsidian.read_transcript(note['path'])
-
-                # Còpia 'original' per comparació: la transcripció tal com era
-                # abans de qualsevol modificació (aliases memoritzats, correccions
-                # LLM, revisió manual).
-                if self.save_comparison:
-                    try:
-                        self._save_comparison_copy(note, transcript, 'original')
-                    except Exception as e:
-                        print(f"[WizardCorreccio] Error desant còpia original: {e}")
-
-                # Referència = els 2 darrers resums anuals (validats per l'usuari
-                # a la fase 2), no la transcripció corregida: aquesta pot tenir
-                # errors residuals (auto-aplicada sense revisar) i, com que al
-                # prompt es presenta com a "ja correcte", suprimiria correccions.
-                reference_summary = self.obsidian.read_recent_year_blocks(note['path'], n=2)
-
-                semantic_context = None
-                if meeting_dir.name != 'Reunions':
-                    from semantic_memory_builder import SemanticMemoryBuilder
-                    from semantic_context_retriever import SemanticContextRetriever
-                    SemanticMemoryBuilder().build_if_stale(meeting_dir)
-                    semantic_context = SemanticContextRetriever().load(meeting_dir)
-
-                result = BatchNoteResult(
-                    note=note, status='pending',
-                    transcript=transcript, corrector=corrector,
-                    meeting_dir=meeting_dir
-                )
-                self.batch_results[idx] = result
-
-                tasks.append({
-                    'index': idx,
-                    'corrector': corrector,
-                    'transcript': transcript,
-                    'reference_summary': reference_summary,
-                    'semantic_context': semantic_context,
-                })
+                self._save_comparison_copy(result.note, task['transcript'], 'original')
             except Exception as e:
-                import traceback
-                traceback.print_exc()
-                result = BatchNoteResult(note=note, status='error', error_msg=str(e))
-                self.batch_results[idx] = result
-                self.table_batch.setItem(idx, 2, QTableWidgetItem("Error"))
-                self.table_batch.setItem(idx, 3, QTableWidgetItem(str(e)[:40]))
+                print(f"[WizardCorreccio] Error desant còpia original: {e}")
 
-        self.lbl_batch_status.setText(f"Processant 0/{len(selected_notes)}...")
+        self._prepared_tasks.append(task)
 
-        self.batch_worker = BatchCorrectionDetectWorker(tasks, self)
+    def _on_prepare_progress(self, done, total):
+        self.progress_batch.setValue(done)
+        self.lbl_batch_status.setText(f"Preparant {done}/{total} (llegint el vault)...")
+
+    def _on_prepare_failed(self, msg):
+        """Error global de preparació (vocabulari il·legible): no hi ha batch."""
+        self.prepare_worker = None
+        self.lbl_batch_status.setText(f"Error llegint el vocabulari: {msg}")
+        for idx, result in self.batch_results.items():
+            result.status = 'error'
+            result.error_msg = msg
+            self.table_batch.setItem(idx, 2, QTableWidgetItem("Error"))
+            self.table_batch.setItem(idx, 3, QTableWidgetItem(msg[:40]))
+        self._update_nav()
+
+    def _on_prepare_finished(self):
+        self.prepare_worker = None
+        if not self._prepared_tasks:
+            self.lbl_batch_status.setText(
+                "Cap nota preparada (vegeu els errors a la taula)."
+            )
+            self._update_nav()
+            return
+
+        # La barra passa a comptar el batch de detecció: les notes que han
+        # fallat preparant-se ja compten com a fetes.
+        errors = sum(1 for r in self.batch_results.values() if r.status == 'error')
+        self.progress_batch.setValue(errors)
+        self.lbl_batch_status.setText(f"Processant 0/{len(self.batch_results)}...")
+
+        self.batch_worker = BatchCorrectionDetectWorker(self._prepared_tasks, self)
         self.batch_worker.note_started.connect(self._on_note_started)
         self.batch_worker.note_finished.connect(self._on_note_finished)
         self.batch_worker.note_error.connect(self._on_note_error)
         self.batch_worker.all_finished.connect(self._on_batch_finished)
         self.batch_worker.start()
+        self._update_nav()
 
     def _on_note_started(self, idx):
         self.batch_results[idx].status = 'detecting'
@@ -509,17 +525,37 @@ class WizardCorreccio(QDialog):
     def _go_back(self):
         idx = self._current_page()
         if idx == 1:
-            # Abortar batch si en curs
-            if self.batch_worker and self.batch_worker.isRunning():
+            # Abortar la feina en curs (preparació o batch). Cal desvincular el
+            # worker, no només abortar-lo: si torna tard, escriuria resultats
+            # dins d'un batch_results que la selecció nova ja ha reiniciat.
+            preparing = self.prepare_worker is not None and self.prepare_worker.isRunning()
+            running = self.batch_worker is not None and self.batch_worker.isRunning()
+            if preparing or running:
                 ret = QMessageBox.question(
                     self, "Abortar?",
-                    "El batch està en curs. Vols abortar-lo?",
+                    ("La preparació està en curs. Vols abortar-la?" if preparing
+                     else "El batch està en curs. Vols abortar-lo?"),
                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
                 )
                 if ret != QMessageBox.StandardButton.Yes:
                     return
-                self.batch_worker.abort()
-                self.batch_worker.wait(3000)
+            if preparing:
+                self._release_worker(self.prepare_worker, (
+                    self.prepare_worker.note_prepared,
+                    self.prepare_worker.note_error,
+                    self.prepare_worker.progress,
+                    self.prepare_worker.failed,
+                    self.prepare_worker.all_finished,
+                ))
+                self.prepare_worker = None
+            if running:
+                self._release_worker(self.batch_worker, (
+                    self.batch_worker.note_started,
+                    self.batch_worker.note_finished,
+                    self.batch_worker.note_error,
+                    self.batch_worker.all_finished,
+                ))
+                self.batch_worker = None
             self.stack.setCurrentIndex(0)
         elif idx == 2:
             self.stack.setCurrentIndex(1)
@@ -550,7 +586,10 @@ class WizardCorreccio(QDialog):
             self.btn_next.setText("Endavant")
             self.btn_next.setEnabled(True)
         elif idx == 1:
-            batch_done = self.batch_worker is None or not self.batch_worker.isRunning()
+            preparing = self.prepare_worker is not None and self.prepare_worker.isRunning()
+            batch_done = not preparing and (
+                self.batch_worker is None or not self.batch_worker.isRunning()
+            )
             self.btn_next.setText("Tancar" if batch_done else "Endavant")
             self.btn_next.setEnabled(batch_done)
             self._update_review_button()
@@ -574,10 +613,13 @@ class WizardCorreccio(QDialog):
         # Preguntar ABANS d'abortar: si l'usuari respon "No", el batch ha de
         # continuar intacte (abans s'abortava primer i un "No" deixava el
         # diàleg obert amb el batch mort en silenci).
+        preparing = self.prepare_worker is not None and self.prepare_worker.isRunning()
         running = self.batch_worker is not None and self.batch_worker.isRunning()
         detected = sum(1 for r in self.batch_results.values() if r.status == 'detected')
-        if running or detected:
+        if preparing or running or detected:
             parts = []
+            if preparing:
+                parts.append("S'està preparant el batch (s'aturarà).")
             if running:
                 parts.append("El batch està en curs (s'aturarà).")
             if detected:
@@ -589,20 +631,38 @@ class WizardCorreccio(QDialog):
             )
             if ret != QMessageBox.StandardButton.Yes:
                 return False
+        if preparing:
+            self._release_worker(self.prepare_worker, (
+                self.prepare_worker.note_prepared,
+                self.prepare_worker.note_error,
+                self.prepare_worker.progress,
+                self.prepare_worker.failed,
+                self.prepare_worker.all_finished,
+            ))
+            self.prepare_worker = None
         if running:
-            self.batch_worker.abort()
-            if not self.batch_worker.wait(3000):
-                # L'abort es comprova entre notes, però la crida LLM en curs
-                # pot trigar més de 3s: desconnectem els senyals i desvinculem
-                # el worker perquè destruir el diàleg no avorti l'app.
-                for sig in (self.batch_worker.note_started,
-                            self.batch_worker.note_finished,
-                            self.batch_worker.note_error,
-                            self.batch_worker.all_finished):
-                    try:
-                        sig.disconnect()
-                    except (RuntimeError, TypeError):
-                        pass
-                detach_worker(self.batch_worker)
-                self.batch_worker = None
+            self._release_worker(self.batch_worker, (
+                self.batch_worker.note_started,
+                self.batch_worker.note_finished,
+                self.batch_worker.note_error,
+                self.batch_worker.all_finished,
+            ))
+            self.batch_worker = None
         return True
+
+    def _release_worker(self, worker, signals, timeout=3000):
+        """Atura un worker i, si no acaba a temps, el desvincula.
+
+        L'abort es comprova entre notes, però la feina en curs pot trigar molt
+        més (una crida LLM, o una lectura del vault penjada a Google Drive):
+        desconnectem els senyals (el resultat tardà no ha d'escriure res) i
+        desvinculem el worker perquè destruir el diàleg no avorti l'app."""
+        worker.abort()
+        if worker.wait(timeout):
+            return
+        for sig in signals:
+            try:
+                sig.disconnect()
+            except (RuntimeError, TypeError):
+                pass
+        detach_worker(worker)

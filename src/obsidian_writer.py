@@ -389,7 +389,7 @@ from: "{thread['from']}"
                     continue
                 title = parts[1].replace('_', ' ') if len(parts) > 1 else p.stem
                 notes.append({'path': p, 'title': title, 'date': parts[0]})
-        return sorted(notes, key=lambda n: n['date'], reverse=True)
+        return sorted(notes, key=lambda n: n['date'])
 
     def mark_as_corrected(self, path: Path) -> Path:
         """Afegeix ~ al stem per indicar que la transcripció ha estat corregida."""
