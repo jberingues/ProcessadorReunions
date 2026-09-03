@@ -17,6 +17,15 @@ class MeetingAnalysisResult(BaseModel):
     new_other_topics: list[str]
 
 
+def _flatten_paragraph(text: str) -> str:
+    """Col·lapsa un resum multi-línia/multi-paràgraf del LLM en una sola línia.
+
+    Sense això, un summary amb salts de línia interns (el LLM sovint en fa un
+    per paràgraf) trencava el bullet Markdown: la primera línia quedava com a
+    "- ...", la resta com a paràgrafs solts sense guió just a sota."""
+    return ' '.join(text.split())
+
+
 def parse_active_topics(temes_oberts_path: Path) -> list[str]:
     """Llegeix Temes oberts.md i retorna els noms de les seccions ### (exclou ## Altres temes)."""
     content = Path(temes_oberts_path).read_text(encoding='utf-8')
@@ -165,9 +174,9 @@ class StateFileUpdater:
         block_lines: list[str] = []
         for topic in result.updated_topics:
             block_lines.append(f"### {topic.topic_name}")
-            block_lines.append(f"- {topic.summary}")
+            block_lines.append(f"- {_flatten_paragraph(topic.summary)}")
             if topic.conclusion:
-                block_lines.append(f"- **Conclusió:** {topic.conclusion}")
+                block_lines.append(f"- **Conclusió:** {_flatten_paragraph(topic.conclusion)}")
             block_lines.append("")
         if result.new_other_topics:
             block_lines.append("#### Altres temes")
@@ -230,9 +239,9 @@ def format_ordre_del_dia(result: MeetingAnalysisResult, all_topics: list[str], d
 
     for i, t in enumerate(result.updated_topics, 1):
         lines.append(f"#### *{i}) {t.topic_name}*")
-        lines.append(f"* {t.summary}")
+        lines.append(f"* {_flatten_paragraph(t.summary)}")
         if t.conclusion:
-            lines.append(f"* **Conclusió:** {t.conclusion}")
+            lines.append(f"* **Conclusió:** {_flatten_paragraph(t.conclusion)}")
         lines.append("")
 
     if result.new_other_topics:
@@ -257,9 +266,9 @@ def format_resum(result: MeetingAnalysisResult, date_str: str) -> str:
 
     for i, t in enumerate(result.updated_topics, 1):
         lines.append(f"#### *{i}) {t.topic_name}*")
-        lines.append(f"* {t.summary}")
+        lines.append(f"* {_flatten_paragraph(t.summary)}")
         if t.conclusion:
-            lines.append(f"* **Conclusió:** {t.conclusion}")
+            lines.append(f"* **Conclusió:** {_flatten_paragraph(t.conclusion)}")
         lines.append("")
 
     if result.new_other_topics:
