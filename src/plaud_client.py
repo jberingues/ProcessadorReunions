@@ -76,10 +76,13 @@ class PlaudRecording:
 
 
 # Fila de `plaud today` / `plaud recent`:
-#   "  <hex_id>  <name>  YYYY-MM-DD  <duration>"
+#   "  <id>  <name>  YYYY-MM-DD  <duration>"
 # El name pot contenir espais simples però els separadors són 2 espais.
+# L'id porta un prefix alfabètic (p. ex. "of_") seguit de hex; abans del canvi
+# de format del CLI (detectat 2026-09-15) era hex pur, per això s'accepta
+# qualsevol combinació de lletres/dígits/guió baix.
 _LIST_ROW = re.compile(
-    r"^  ([a-f0-9]+)  (.+)  (\d{4}-\d{2}-\d{2})  (\S+)\s*$"
+    r"^  ([a-zA-Z0-9_]+)  (.+)  (\d{4}-\d{2}-\d{2})  (\S+)\s*$"
 )
 
 # Fila de `plaud file`: "  key:   value"
