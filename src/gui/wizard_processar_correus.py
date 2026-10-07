@@ -116,7 +116,7 @@ class WizardProcessarCorreus(QDialog):
         self._project_dir = note['path'].parent
         path_parts = note['path'].parts
 
-        if 'Seguiment' in path_parts:
+        if 'Persones' in path_parts or 'Seguiment' in path_parts:
             subtype = self._extract_subtype_from_note(note['path'])
             if subtype == 'puntual':
                 self._start_seguiment_puntual()

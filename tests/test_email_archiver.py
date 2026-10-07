@@ -44,7 +44,7 @@ class TestDiscoverVaultSeries(unittest.TestCase):
 
     def test_detects_flat_series(self):
         # L'etiqueta és el nom de fulla, no el camí complet.
-        _make_series(self.reunions, "Seguiment/Arnau Prunell")
+        _make_series(self.reunions, "Persones/Arnau Prunell")
         _make_series(self.reunions, "Projectes/EUROTRACK")
         _make_series(self.reunions, "Proveïdors/CELO")
         _make_series(self.reunions, "Reunions vàries/Noves incorporacions")
@@ -54,7 +54,7 @@ class TestDiscoverVaultSeries(unittest.TestCase):
         self.assertIn("CELO", d.active)
         self.assertIn("Noves incorporacions", d.active)
         # El top-level es guarda a part per a la prioritat de dispatch.
-        self.assertEqual(d.top_level["Arnau Prunell"], "Seguiment")
+        self.assertEqual(d.top_level["Arnau Prunell"], "Persones")
         self.assertEqual(d.top_level["EUROTRACK"], "Projectes")
 
     def test_detects_nested_provider(self):
@@ -93,16 +93,16 @@ class TestDiscoverVaultSeries(unittest.TestCase):
 
     def test_leaf_name_collision_warns_and_keeps_first(self):
         # Dues sèries amb el mateix nom de fulla en top-levels diferents.
-        _make_series(self.reunions, "Seguiment/CRA")
+        _make_series(self.reunions, "Persones/CRA")
         _make_series(self.reunions, "Reunions vàries/CRA")
         d = discover_vault_series(self.tmp)
         self.assertIn("CRA", d.active)
-        # Es conserva la primera (Reunions vàries < Seguiment alfabèticament).
-        self.assertEqual(d.active["CRA"], self.reunions / "Reunions vàries" / "CRA")
+        # Es conserva la primera (Persones < Reunions vàries alfabèticament).
+        self.assertEqual(d.active["CRA"], self.reunions / "Persones" / "CRA")
         self.assertTrue(any("Col·lisió" in w and "CRA" in w for w in d.warnings))
 
     def test_template_folders_skipped(self):
-        _make_series(self.reunions, "Seguiment/xSeguiment")
+        _make_series(self.reunions, "Persones/xPersona")
         _make_series(self.reunions, "Projectes/xProjecte")
         _make_series(self.reunions, "Proveïdors/xProveïdor")
         d = discover_vault_series(self.tmp)
@@ -110,7 +110,7 @@ class TestDiscoverVaultSeries(unittest.TestCase):
 
     def test_zconfig_skipped(self):
         (self.reunions / "zConfig").mkdir(parents=True)
-        _make_series(self.reunions, "Seguiment/Joan")
+        _make_series(self.reunions, "Persones/Joan")
         d = discover_vault_series(self.tmp)
         self.assertIn("Joan", d.active)
 
@@ -125,11 +125,11 @@ class TestDiscoverVaultSeries(unittest.TestCase):
         self.assertIn("Sincronització_OT", d.active)
 
     def test_closed_series_indexed_by_active_label(self):
-        _make_series(self.reunions, "Temes seguiment tancats/A10Pro")
+        _make_series(self.reunions, "Tancats/A10Pro")
         d = discover_vault_series(self.tmp)
         self.assertEqual(d.active, {})
         self.assertIn("A10Pro", d.closed_by_active_label)
-        self.assertEqual(d.top_level["A10Pro"], "Seguiment")
+        self.assertEqual(d.top_level["A10Pro"], "Persones")
 
     def test_other_top_levels_included(self):
         # Top-levels no hardcoded (e.g. 'Informació') s'inclouen si tenen
@@ -141,9 +141,9 @@ class TestDiscoverVaultSeries(unittest.TestCase):
         self.assertIn("Llibres", d.active)
 
     def test_excluded_top_levels_skipped(self):
-        # zConfig i Temes seguiment tancats no s'escanegen com a sèries actives.
+        # zConfig i Tancats no s'escanegen com a sèries actives.
         (self.reunions / "zConfig").mkdir(parents=True)
-        _make_series(self.reunions, "Temes seguiment tancats/A10Pro")
+        _make_series(self.reunions, "Tancats/A10Pro")
         d = discover_vault_series(self.tmp)
         # Tancades van al diccionari de tancades, no a actives.
         self.assertEqual(d.active, {})
@@ -156,7 +156,7 @@ class TestDiscoverVaultSeries(unittest.TestCase):
     def test_folder_with_only_reunions_is_not_a_series(self):
         # Una carpeta amb només Reunions/ però sense Correus/ NO genera etiqueta.
         # L'usuari ha de crear Correus/ explícitament per opt-in.
-        series = self.reunions / "Seguiment" / "NoMail"
+        series = self.reunions / "Persones" / "NoMail"
         (series / "Reunions").mkdir(parents=True)
         d = discover_vault_series(self.tmp)
         self.assertEqual([l for l in d.active if "NoMail" in l], [])
@@ -182,13 +182,13 @@ class TestDiscoverVaultSeries(unittest.TestCase):
 
     def test_closed_series_requires_correus_too(self):
         # Les sèries tancades segueixen el mateix criteri: necessiten Correus/.
-        series = self.reunions / "Temes seguiment tancats" / "JoanAntic"
+        series = self.reunions / "Tancats" / "JoanAntic"
         (series / "Correus").mkdir(parents=True)
         d = discover_vault_series(self.tmp)
         self.assertIn("JoanAntic", d.closed_by_active_label)
 
     def test_closed_series_without_correus_is_ignored(self):
-        series = self.reunions / "Temes seguiment tancats" / "JoanSenseCorreus"
+        series = self.reunions / "Tancats" / "JoanSenseCorreus"
         (series / "Reunions").mkdir(parents=True)
         d = discover_vault_series(self.tmp)
         self.assertNotIn("JoanSenseCorreus", d.closed_by_active_label)
@@ -198,10 +198,12 @@ class TestPickDestination(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
         self.reunions = self.tmp / "Reunions"
-        self.p_joan = _make_series(self.reunions, "Seguiment/Joan")
+        self.p_joan = _make_series(self.reunions, "Persones/Joan")
         self.p_eurotrack = _make_series(self.reunions, "Projectes/EUROTRACK")
         self.p_celo = _make_series(self.reunions, "Proveïdors/CELO")
-        self.p_a10 = _make_series(self.reunions, "Temes seguiment tancats/A10Pro")
+        self.p_acme = _make_series(self.reunions, "Clients/ACME")
+        self.p_noves = _make_series(self.reunions, "Reunions vàries/Noves incorporacions")
+        self.p_a10 = _make_series(self.reunions, "Tancats/A10Pro")
         self.d = discover_vault_series(self.tmp)
 
     def tearDown(self):
@@ -219,14 +221,14 @@ class TestPickDestination(unittest.TestCase):
         self.assertEqual(r.extra_labels, [])
         self.assertFalse(r.is_closed)
 
-    def test_priority_projectes_over_seguiment(self):
+    def test_priority_projectes_over_persones(self):
         # La prioritat es deriva del top-level del path, no de l'etiqueta.
         r = pick_destination(["Joan", "EUROTRACK"], self.d)
         self.assertEqual(r.dest, self.p_eurotrack)
         self.assertEqual(r.primary_label, "EUROTRACK")
         self.assertIn("Joan", r.extra_labels)
 
-    def test_priority_proveidors_over_seguiment(self):
+    def test_priority_proveidors_over_persones(self):
         r = pick_destination(["Joan", "CELO"], self.d)
         self.assertEqual(r.dest, self.p_celo)
         self.assertEqual(r.primary_label, "CELO")
@@ -234,6 +236,28 @@ class TestPickDestination(unittest.TestCase):
     def test_priority_projectes_over_proveidors(self):
         r = pick_destination(["CELO", "EUROTRACK"], self.d)
         self.assertEqual(r.primary_label, "EUROTRACK")
+
+    def test_priority_projectes_over_clients(self):
+        r = pick_destination(["ACME", "EUROTRACK"], self.d)
+        self.assertEqual(r.primary_label, "EUROTRACK")
+
+    def test_priority_clients_over_proveidors(self):
+        r = pick_destination(["CELO", "ACME"], self.d)
+        self.assertEqual(r.dest, self.p_acme)
+        self.assertEqual(r.primary_label, "ACME")
+
+    def test_priority_persones_over_reunions_varies(self):
+        # Sense 'Persones' a DISPATCH_PRIORITY cauria a prioritat residual
+        # i guanyaria Reunions vàries.
+        r = pick_destination(["Noves incorporacions", "Joan"], self.d)
+        self.assertEqual(r.dest, self.p_joan)
+        self.assertEqual(r.primary_label, "Joan")
+
+    def test_closed_series_priority_as_persones(self):
+        # Les tancades competeixen amb prioritat de Persones (no residual).
+        r = pick_destination(["Noves incorporacions", "A10Pro"], self.d)
+        self.assertEqual(r.dest, self.p_a10)
+        self.assertTrue(r.is_closed)
 
     def test_closed_series_late_email(self):
         # Etiqueta A10Pro però la sèrie és tancada.
@@ -386,14 +410,14 @@ class TestProcessedStore(unittest.TestCase):
 
     def test_mark_archived_records_count(self):
         store = {}
-        mark_archived(store, "t1", 5, "Seguiment/Joan")
+        mark_archived(store, "t1", 5, "Persones/Joan")
         self.assertEqual(store["t1"]["message_count"], 5)
-        self.assertEqual(store["t1"]["dest_path"], "Seguiment/Joan")
+        self.assertEqual(store["t1"]["dest_path"], "Persones/Joan")
         self.assertIn("archived_at", store["t1"])
 
     def test_mark_archived_records_subject(self):
         store = {}
-        mark_archived(store, "t1", 5, "Seguiment/Joan", subject="Oferta A10Pro")
+        mark_archived(store, "t1", 5, "Persones/Joan", subject="Oferta A10Pro")
         self.assertEqual(store["t1"]["subject"], "Oferta A10Pro")
         # Sense subject, la clau no s'escriu (entrades antigues idèntiques).
         mark_archived(store, "t2", 1, "Proveïdors/EBV")

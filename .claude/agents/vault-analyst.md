@@ -21,7 +21,7 @@ Paths contain spaces — always quote them in Bash.
 
 ```
 Reunions/
-  <Tipus>/              # Seguiment, Projectes, Puntual, ...
+  <Tipus>/              # Persones, Projectes, Clients, Proveïdors, Reunions vàries, ...
     <Subfolder>/
       Reunions/         # meeting notes
         YYMMDD_Títol.md         # raw transcript

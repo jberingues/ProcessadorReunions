@@ -46,7 +46,7 @@ Estructura **homogènia** (migració one-shot 2026-05): totes les sèries tenen 
 
 ```
 Reunions/
-  <Tipus>/                                # Seguiment / Sincronització / Proveïdors / Projectes / Reunions vàries
+  <Tipus>/                                # Persones / Sincronització / Clients / Proveïdors / Projectes / Reunions vàries
     <Subfolder>/                          # sèrie de reunions
       Reunions/YYMMDD_Títol.md            # notes individuals (frontmatter sense `type:`)
       Temes oberts.md                     # sèries no-sync (auto-creat buit a fase 1 si falta)
@@ -62,9 +62,9 @@ Reunions/
 
 **Gotchas d'estructura:**
 - **Sèries niu reals**: una sèrie pot contenir sub-sèries amb contingut propi (e.g. `Proveïdors/ARROW/` amb `Correus/` propi **i** `Proveïdors/ARROW/Microchip/` també). El descobriment de sèries i l'arbre de destí descendeixen per trobar-les.
-- **Cicle de vida**: un tema neix a `Seguiment/` i es trasllada a `Projectes/`, `Reunions vàries/` o `Temes seguiment tancats/`. L'etiqueta Gmail (nom de fulla) **no canvia** amb el trasllat.
+- **Cicle de vida**: un tema neix a `Persones/` i es trasllada a `Projectes/`, `Reunions vàries/` o `Tancats/`. L'etiqueta Gmail (nom de fulla) **no canvia** amb el trasllat.
 - **Nom `<Any> <Subfolder>.md`**: `<Subfolder>` via `series_name_for_file()` (`_`→espai, treu `[]`). L'any ve del prefix YYMMDD de la nota, no de la data actual (reunió de 2025 → `2025 <Subfolder>.md`).
-- **Subfolders dins `Seguiment/`**: sense prefix `Seguiment_` (eliminat 2026-05). Excepció: `Seguiment x/` (carpeta de proves). Els event titles de Calendar encara duen `Seguiment_` → fitxers individuals `YYMMDD_Seguiment_<X>.md` (cosmètic).
+- **`Persones/`** (abans `Seguiment/`, reanomenat 2026-10): subfolders sense prefix `Seguiment_` (eliminat 2026-05). Excepció: `Seguiment x/` (carpeta de proves). Els event titles de Calendar encara duen `Seguiment_` → fitxers individuals `YYMMDD_Seguiment_<X>.md` (cosmètic).
 - **Prefix `x`** (`xProjecte/`, `xProveïdor/`) = plantilles; el codi i la migració els salten.
 
 ## GUI Wizard Flows (`src/gui/`)
@@ -91,8 +91,8 @@ Resum funcional; per a signatures exactes llegeix el mòdul. Es destaquen només
 - **`gmail_fetcher.py` — `GmailFetcher`**: wrapper Gmail API (OAuth compartit). Gestió d'etiquetes (`list/create/rename_label` — `rename` conserva l'ID i per tant les assignacions de fils), `list_thread_ids_for_day`, `peek_thread` (`format=minimal`, per idempotència), `fetch_thread_full` (missatges cronològics, `body_text` text/plain o HTML→`html2text`, adjunts binaris).
   - **`is_inline_attachment`**: descarta `image/*` **+ `Content-ID` present** (ignora `Content-Disposition`). El `Content-ID` és el senyal fiable de imatge embeguda (signatura/logo). **No** s'exigeix `inline` perquè reenviar canvia la disposició i deixava colar signatures (e.g. icones socials EBV). Documents reals (PDF/docx/…) no tenen Content-ID; imatges adjuntades explícitament tampoc.
 - **`email_archiver.py`** — lògica pura (sense Qt ni Gmail):
-  - `discover_vault_series(vault, include_sincro=False)`: carpeta = sèrie **sii conté `Correus/`** (`SERIES_SUBFOLDER_MARKER`, opt-in explícit). **L'etiqueta és el nom de fulla** (no el camí) → invariant als trasllats; per tant els noms de fulla han de ser **únics** (col·lisions → `discovery.warnings`, es conserva la primera). Niu real: `_walk_series` no s'atura en trobar sèrie (salta `NON_SERIES_SUBFOLDERS`). Exclou sempre `zConfig` i `Temes seguiment tancats` (→ `closed_by_active_label`); `Sincronització` opt-in; salta `x*`. `top_level` desa el top-level de cada etiqueta per al dispatch.
-  - `pick_destination`: prioritat `Projectes > Proveïdors > Seguiment > Reunions vàries` (derivada de `top_level`, no de l'string). Sèrie tancada → `is_closed=True` + warning. Altres etiquetes → `extra_labels`.
+  - `discover_vault_series(vault, include_sincro=False)`: carpeta = sèrie **sii conté `Correus/`** (`SERIES_SUBFOLDER_MARKER`, opt-in explícit). **L'etiqueta és el nom de fulla** (no el camí) → invariant als trasllats; per tant els noms de fulla han de ser **únics** (col·lisions → `discovery.warnings`, es conserva la primera). Niu real: `_walk_series` no s'atura en trobar sèrie (salta `NON_SERIES_SUBFOLDERS`). Exclou sempre `zConfig` i `Tancats` (→ `closed_by_active_label`); `Sincronització` opt-in; salta `x*`. `top_level` desa el top-level de cada etiqueta per al dispatch.
+  - `pick_destination`: prioritat `Projectes > Clients > Proveïdors > Persones > Reunions vàries` (derivada de `top_level`, no de l'string; criteri: guanya el tema més concret). Top-level no llistat → prioritat residual (la més baixa): **si afegeixes un top-level nou, afegeix-lo a `DISPATCH_PRIORITY`**. Sèrie tancada → competeix com a `Persones` (`CLOSED_DISPATCH_TOP_LEVEL`), `is_closed=True` + warning. Altres etiquetes → `extra_labels`.
   - `plan_label_migration`: migra etiquetes Gmail format antic (`Seguiment/CRA`) → fulla (`CRA`). Usat per `migrate_gmail_labels.py` (dry-run per defecte, `--apply`).
   - `normalize_subject`, `place_attachment` (idempotent: bytes iguals reusa, sinó sufix `_2`…), store JSON (`load/save_processed_store`, `needs_archive`, `mark_archived` — inclou `subject` informatiu per fer el JSON autoexplicatiu), `sync_gmail_labels` → `LabelSyncResult` (`created/failed/orphan/closed`; mai esborra).
   - **`trim_quoted_reply(body)`**: retalla la cua citada d'una **resposta** (atribució "El dia … va escriure:"/"On … wrote:", separador "-----Missatge original-----", bloc de capçaleres inline De:/Enviat:, o tirada de ≥2 línies `>`). Sense això cada resposta duplicava tot l'històric del fil (creixement quadràtic; soroll per a consultes LLM). Prudent: si el tall cau a la línia 0 o buida el cos, conserva tot. `create_email_thread_note` l'aplica **només del 2n missatge en endavant** — al 1r missatge d'un reenviat, el contingut d'interès és justament sota les capçaleres inline.
@@ -160,8 +160,8 @@ Resum funcional; per a signatures exactes llegeix el mòdul. Es destaquen només
 
 - **Convenció d'etiquetes**: **nom de fulla** de la sèrie, pla (sense `/`). Una per sèrie amb `Correus/`. **Per què fulla i no camí**: la sèrie viatja entre top-levels; la fulla és invariant, així els fils històrics segueixen lligats. Requereix fulles úniques (col·lisions s'avisen). Migració format antic → `migrate_gmail_labels.py`.
 - **Sync vault→Gmail**: a l'inici, `EmailArchiveWorker` crea les etiquetes que falten; avisa d'òrfenes; **no esborra mai**.
-- **Sèrie tancada**: a `Temes seguiment tancats/X/` conserva l'etiqueta `X` (`closed_by_active_label`). Correu amb etiqueta tancada → s'arxiva igualment a la carpeta tancada, `[TANCADA]` al log + `sync_closed_warnings`.
-- **Dispatcher**: múltiples etiquetes vault → prioritat `Projectes > Proveïdors > Seguiment > Reunions vàries`. Primary → `labels:`; resta → `tags:`; no-vault s'ignoren.
+- **Sèrie tancada**: a `Tancats/X/` conserva l'etiqueta `X` (`closed_by_active_label`). Correu amb etiqueta tancada → s'arxiva igualment a la carpeta tancada, `[TANCADA]` al log + `sync_closed_warnings`.
+- **Dispatcher**: múltiples etiquetes vault → prioritat `Projectes > Clients > Proveïdors > Persones > Reunions vàries`. Primary → `labels:`; resta → `tags:`; no-vault s'ignoren.
 - **Idempotència** (`<vault>/zConfig/.processed_threads.json`, `{thread_id: {message_count, archived_at, dest_path, subject}}`): `peek_thread` abans del full; si `message_count` no ha crescut, salta; si ha crescut → `fetch_thread_full` + regenera nota sencera (adjunts amb bytes idèntics es reusen). El `subject` és informatiu (per identificar fils sense anar a Gmail).
 - **Format nota** (`<dest>/Correus/YYMMDD_<assumpte>.md`): frontmatter `type:correu, thread_id, data, assumpte, labels:[primary], tags:[extras]`; una secció `## YYYY-MM-DD HH:MM — Nom <email>` per missatge (`(resposta)` des del 2n); a les respostes es retalla l'històric citat (`trim_quoted_reply` — el fil sencer ja és a les seccions anteriors); adjunts a `Fitxers/` amb wikilinks. Data = primer missatge.
 - **Finestra de dies**: l'arxivat processa un **rang** `[dia_final − (dies−1), dia_final]` (ambdós inclusius). `gmail_fetcher.build_date_range_query(start, end)` construeix `after:start before:end+1` (`before` exclusiu a Gmail); `list_thread_ids_for_range` el consulta (un fil amb missatges en diversos dies del rang apareix un sol cop). `list_thread_ids_for_day` delega al de rang. `EmailArchiveWorker` rep `start_day`/`end_day`.

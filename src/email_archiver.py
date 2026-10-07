@@ -19,7 +19,7 @@ from pathlib import Path
 
 # Top-levels dins de Reunions/ amb tractament especial. La resta s'inclouen
 # automàticament si contenen alguna sèrie (carpeta amb subfolder `Reunions/`).
-SERIES_TOP_LEVEL_CLOSED = 'Temes seguiment tancats'
+SERIES_TOP_LEVEL_CLOSED = 'Tancats'
 SERIES_TOP_LEVEL_SINCRO = 'Sincronització'
 
 # Top-levels que MAI s'escanegen com a sèries actives.
@@ -29,8 +29,13 @@ SERIES_TOP_LEVEL_SINCRO = 'Sincronització'
 SERIES_TOP_LEVEL_EXCLUDED = {'zConfig', SERIES_TOP_LEVEL_CLOSED}
 
 # Prioritat per decidir destí quan un fil té múltiples etiquetes de vault.
+# Criteri: guanya el tema més concret (projecte > client > proveïdor > persona).
 # Els top-levels no listats reben prioritat residual (la més baixa).
-DISPATCH_PRIORITY = ['Projectes', 'Proveïdors', 'Seguiment', 'Reunions vàries']
+DISPATCH_PRIORITY = ['Projectes', 'Clients', 'Proveïdors', 'Persones', 'Reunions vàries']
+
+# Top-level amb què competeixen les sèries tancades a la prioritat de dispatch
+# (origen conceptual de les tancades: seguiments de persones).
+CLOSED_DISPATCH_TOP_LEVEL = 'Persones'
 
 # Path relatiu del JSON d'idempotència dins del vault.
 PROCESSED_STORE_REL = 'zConfig/.processed_threads.json'
@@ -58,7 +63,7 @@ class VaultDiscovery:
 
     Les etiquetes Gmail són el **nom de fulla** de la sèrie (e.g. `CRA`,
     `Microchip`), no el camí complet. Així l'etiqueta és invariant quan la
-    sèrie es trasllada entre top-levels (Seguiment → Projectes → Reunions
+    sèrie es trasllada entre top-levels (Persones → Projectes → Reunions
     vàries → tancades). Conseqüència: els noms de fulla han de ser únics al
     vault; les col·lisions s'avisen a `warnings` i només es conserva la
     primera ocurrència.
@@ -67,10 +72,10 @@ class VaultDiscovery:
       Aquestes són les etiquetes que han d'existir a Gmail.
     - `closed_by_active_label`: { etiqueta_fulla → directori tancat } per
       capturar correus tardans d'etiquetes encara presents a Gmail però
-      la sèrie ja és a `Temes seguiment tancats/`.
+      la sèrie ja és a `Tancats/`.
     - `top_level`: { etiqueta_fulla → top-level } per resoldre la prioritat
       de dispatch (l'etiqueta ja no conté el top-level). Les tancades es
-      mapegen a 'Seguiment'.
+      mapegen a `CLOSED_DISPATCH_TOP_LEVEL`.
     """
     active: dict[str, Path] = field(default_factory=dict)
     closed_by_active_label: dict[str, Path] = field(default_factory=dict)
@@ -154,12 +159,12 @@ def discover_vault_series(vault_path: Path | str, include_sincro: bool = False) 
 
     # Tancades: les indexem per l'etiqueta de fulla esperada. Com que
     # l'etiqueta és invariant al trasllat, el correu tardà arriba amb el
-    # mateix nom de fulla que tindria activa. Es mapegen a 'Seguiment' per a
-    # la prioritat de dispatch (origen conceptual de les tancades).
+    # mateix nom de fulla que tindria activa. Es mapegen a
+    # CLOSED_DISPATCH_TOP_LEVEL per a la prioritat de dispatch.
     closed_root = reunions_root / SERIES_TOP_LEVEL_CLOSED
     for leaf, path in _walk_series(closed_root):
         discovery.closed_by_active_label[leaf] = path
-        discovery.top_level.setdefault(leaf, 'Seguiment')
+        discovery.top_level.setdefault(leaf, CLOSED_DISPATCH_TOP_LEVEL)
 
     return discovery
 
