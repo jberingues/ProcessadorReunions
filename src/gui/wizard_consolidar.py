@@ -16,6 +16,21 @@ from PySide6.QtWidgets import (
 from consolidator import consolidate_pending_note
 
 
+def _result_cell(res: dict) -> QTableWidgetItem:
+    """Cel·la d'estat d'una nota consolidada: resum + projectes on s'han
+    escrit mencions; els avisos de mencions (no bloquegen) al tooltip."""
+    msg = "Consolidada ✓" if res["year_written"] else "Consolidada (sense resum)"
+    if res.get("mentions"):
+        msg += " · mencions: " + ", ".join(res["mentions"])
+    warnings = res.get("mention_warnings") or []
+    if warnings:
+        msg += " · ⚠ avís mencions"
+    cell = QTableWidgetItem(msg)
+    if warnings:
+        cell.setToolTip("\n".join(warnings))
+    return cell
+
+
 class WizardConsolidar(QDialog):
     def __init__(self, obsidian, parent=None, preselected_paths=None):
         super().__init__(parent)
@@ -120,8 +135,7 @@ class WizardConsolidar(QDialog):
             note = self.notes[r]
             try:
                 res = consolidate_pending_note(self.obsidian, note)
-                msg = "Consolidada ✓" if res["year_written"] else "Consolidada (sense resum)"
-                self.table.setItem(r, 3, QTableWidgetItem(msg))
+                self.table.setItem(r, 3, _result_cell(res))
                 ok += 1
             except Exception as e:
                 cell = QTableWidgetItem(f"Error: {str(e).splitlines()[0][:60]}")

@@ -10,6 +10,9 @@ class ActiveTopicUpdate(BaseModel):
     topic_name: str
     summary: str
     conclusion: str = ""  # resum d'una línia del tema; "" per compat enrere
+    # Projectes (nom de carpeta de Projectes/) on el tema decideix o informa
+    # alguna cosa. Es renderitzen com a links [[X]]; [] per compat enrere.
+    projects: list[str] = []
 
 
 class MeetingAnalysisResult(BaseModel):
@@ -26,6 +29,121 @@ def _flatten_paragraph(text: str) -> str:
     return ' '.join(text.split())
 
 
+def _projects_line(projects: list[str]) -> str:
+    """Text de la línia de projectes d'un tema (sense el prefix de bullet)."""
+    return "**Projectes:** " + ", ".join(f"[[{p}]]" for p in projects)
+
+
+# [[X]], [[X|àlies]], [[X#secció]] → X
+_WIKILINK_RE = re.compile(r'\[\[([^\]|#]+)(?:[#|][^\]]*)?\]\]')
+
+
+def _parse_project_links(text: str) -> list[str]:
+    """Noms dels fitxers enllaçats a `text`, en ordre i sense duplicats."""
+    seen: list[str] = []
+    for name in _WIKILINK_RE.findall(text):
+        name = name.strip()
+        if name and name not in seen:
+            seen.append(name)
+    return seen
+
+
+def projects_prompt_section(projects: list[tuple[str, list[str]]]) -> str:
+    """Bloc del prompt amb la llista de projectes per etiquetar els temes.
+    Buit si no n'hi ha (el prompt queda com abans: sense links)."""
+    if not projects:
+        return ""
+    lines = []
+    for name, aliases in projects:
+        lines.append(f"- {name} (també: {', '.join(aliases)})" if aliases else f"- {name}")
+    return f"""
+PROJECTES DE L'EMPRESA (nom canònic, i entre parèntesis altres noms amb què s'hi fa referència):
+{chr(10).join(lines)}
+
+ETIQUETATGE DE PROJECTES:
+- Per cada tema, omple el camp `projects` amb el NOM CANÒNIC dels projectes de la llista sobre els quals en aquest tema es DECIDEIX o s'INFORMA alguna cosa rellevant (estat, problemes, decisions, terminis, responsables, propers passos).
+- Inclou-hi el projecte encara que no s'anomeni explícitament, si pel context és inequívoc que el tema en tracta.
+- NO hi posis un projecte només perquè s'esmenta de passada o com a comparació.
+- Si el tema no tracta cap projecte de la llista, deixa `projects` buit. No inventis projectes que no siguin a la llista.
+"""
+
+
+def normalize_projects(result: MeetingAnalysisResult,
+                       projects: list[tuple[str, list[str]]]) -> MeetingAnalysisResult:
+    """Valida els projectes que retorna el LLM: àlies → nom canònic (sense
+    distingir majúscules), treu `[[ ]]`, elimina duplicats i descarta noms
+    que no existeixen (un link inventat crearia una nota buida a Obsidian).
+    Als `new_other_topics` valida igualment els links inline `[[X]]`."""
+    lookup: dict[str, str] = {}
+    for name, aliases in projects:
+        for key in (name, *aliases):
+            lookup.setdefault(key.strip().lower(), name)
+
+    def canon(raw: str) -> str | None:
+        return lookup.get(raw.strip().strip('[]').split('|')[0].split('#')[0].strip().lower())
+
+    for topic in result.updated_topics:
+        clean: list[str] = []
+        for raw in topic.projects:
+            name = canon(raw)
+            if name and name not in clean:
+                clean.append(name)
+        topic.projects = clean
+
+    def fix_inline(text: str) -> str:
+        def sub(m):
+            name = canon(m.group(1))
+            return f"[[{name}]]" if name else ""
+        return ' '.join(_WIKILINK_RE.sub(sub, text).split())
+
+    result.new_other_topics = [fix_inline(t) for t in result.new_other_topics]
+    return result
+
+
+def _iso_date(date_label: str) -> str:
+    """'261005' → '2026-10-05'; si no és YYMMDD, '?'."""
+    if len(date_label) == 6 and date_label.isdigit():
+        return f"20{date_label[:2]}-{date_label[2:4]}-{date_label[4:]}"
+    return "?"
+
+
+def _link_safe(text: str) -> str:
+    """Treu els caràcters que trenquen un link d'Obsidian a un encapçalament."""
+    return ' '.join(re.sub(r'[\[\]#|^]', ' ', text).split())
+
+
+def build_project_mentions(result: MeetingAnalysisResult, date_label: str,
+                           series_label: str, year_note_stem: str, heading: str,
+                           exclude=()) -> dict[str, list[str]]:
+    """Línies de menció per a la nota principal de cada projecte etiquetat.
+
+    Una línia per (tema, projecte): data · link al bloc de l'anual · tema:
+    conclusió (o resum si no n'hi ha). Els 'Altres temes' compten si porten
+    links inline [[X]] (el text de la menció va sense els links).
+    `exclude`: projectes a ometre (la sèrie mateixa de la reunió)."""
+    link = f"[[{year_note_stem}#{_link_safe(heading)}|{series_label}]]"
+    prefix = f"- **{_iso_date(date_label)}** · {link} · "
+    out: dict[str, list[str]] = {}
+
+    def add(project: str, line: str):
+        if project in exclude:
+            return
+        lines = out.setdefault(project, [])
+        if line not in lines:
+            lines.append(line)
+
+    for t in result.updated_topics:
+        text = _flatten_paragraph(t.conclusion or t.summary)
+        for project in t.projects:
+            add(project, f"{prefix}*{t.topic_name}*: {text}")
+    for other in result.new_other_topics:
+        projects = _parse_project_links(other)
+        text = ' '.join(_WIKILINK_RE.sub('', other).split())
+        for project in projects:
+            add(project, f"{prefix}*Altres temes*: {text}")
+    return out
+
+
 def parse_active_topics(temes_oberts_path: Path) -> list[str]:
     """Llegeix Temes oberts.md i retorna els noms de les seccions ### (exclou ## Altres temes)."""
     content = Path(temes_oberts_path).read_text(encoding='utf-8')
@@ -39,6 +157,13 @@ def parse_active_topics(temes_oberts_path: Path) -> list[str]:
     return topics
 
 
+# Els "Altres temes" són text lliure (no tenen camp `projects`): el link va inline.
+OTHER_TOPICS_LINKS_INSTRUCTION = (
+    "- Als new_other_topics, si un tema tracta un projecte de la llista amb el mateix criteri, "
+    "afegeix al final del text el link amb el nom canònic, per exemple: \"... [[A10Pro]]\".\n"
+)
+
+
 class MeetingAnalyzer:
     def __init__(self, model: str = None):
         # Tier hard: la qualitat dels resums acaba a la memòria permanent
@@ -46,7 +171,8 @@ class MeetingAnalyzer:
         self.llm = LLM(model=model or model_hard(), drop_params=True,
                        reasoning_effort=reasoning_effort())
 
-    def analyze(self, topics: list[str], transcript: str, brief: bool = False) -> MeetingAnalysisResult:
+    def analyze(self, topics: list[str], transcript: str, brief: bool = False,
+                projects: list[tuple[str, list[str]]] | None = None) -> MeetingAnalysisResult:
         topics_list = '\n'.join(f'- {t}' for t in topics)
         summary_instruction = (
             "escriu un resum de màxim 2 línies del que s'ha dit."
@@ -79,7 +205,7 @@ INSTRUCCIONS:
 - Si un tema no s'ha tractat, NO l'incloguis a updated_topics.
 - Si s'han tractat temes nous que no estan a la llista de temes oberts, afegeix-los a new_other_topics amb una descripció breu.
 - El camp topic_name ha de coincidir EXACTAMENT amb el nom del tema tal com apareix a la llista.
-""",
+{projects_prompt_section(projects or [])}{OTHER_TOPICS_LINKS_INSTRUCTION if projects else ""}""",
             expected_output="MeetingAnalysisResult amb els temes tractats i nous temes",
             agent=agent,
             output_pydantic=MeetingAnalysisResult
@@ -90,9 +216,10 @@ INSTRUCCIONS:
         result = crew.kickoff()
         print("  ✓ Agent analista finalitzat\n")
         log_crew_usage('analisi seguiment', crew)
-        return result.pydantic
+        return normalize_projects(result.pydantic, projects or [])
 
-    def summarize(self, transcript: str, brief: bool = False) -> MeetingAnalysisResult:
+    def summarize(self, transcript: str, brief: bool = False,
+                  projects: list[tuple[str, list[str]]] | None = None) -> MeetingAnalysisResult:
         """Resum lliure d'una reunió: NO parteix d'una llista de temes oberts.
 
         El LLM detecta pel seu compte els temes principals tractats i en fa un
@@ -129,7 +256,7 @@ INSTRUCCIONS:
 - Només resumeix el que s'ha dit, no inventis.
 - Posa TOTS els temes a updated_topics: topic_name = nom curt del tema, summary = el resum, conclusion = la conclusió d'una línia.
 - Deixa new_other_topics buit.
-""",
+{projects_prompt_section(projects or [])}""",
             expected_output="MeetingAnalysisResult amb un tema i resum per cada assumpte tractat",
             agent=agent,
             output_pydantic=MeetingAnalysisResult
@@ -140,7 +267,7 @@ INSTRUCCIONS:
         result = crew.kickoff()
         print("  ✓ Agent de resum finalitzat\n")
         log_crew_usage('resum lliure', crew)
-        return result.pydantic
+        return normalize_projects(result.pydantic, projects or [])
 
 
 class StateFileUpdater:
@@ -177,6 +304,8 @@ class StateFileUpdater:
             block_lines.append(f"- {_flatten_paragraph(topic.summary)}")
             if topic.conclusion:
                 block_lines.append(f"- **Conclusió:** {_flatten_paragraph(topic.conclusion)}")
+            if topic.projects:
+                block_lines.append(f"- {_projects_line(topic.projects)}")
             block_lines.append("")
         if result.new_other_topics:
             block_lines.append("#### Altres temes")
@@ -242,6 +371,8 @@ def format_ordre_del_dia(result: MeetingAnalysisResult, all_topics: list[str], d
         lines.append(f"* {_flatten_paragraph(t.summary)}")
         if t.conclusion:
             lines.append(f"* **Conclusió:** {_flatten_paragraph(t.conclusion)}")
+        if t.projects:
+            lines.append(f"* {_projects_line(t.projects)}")
         lines.append("")
 
     if result.new_other_topics:
@@ -269,6 +400,8 @@ def format_resum(result: MeetingAnalysisResult, date_str: str) -> str:
         lines.append(f"* {_flatten_paragraph(t.summary)}")
         if t.conclusion:
             lines.append(f"* **Conclusió:** {_flatten_paragraph(t.conclusion)}")
+        if t.projects:
+            lines.append(f"* {_projects_line(t.projects)}")
         lines.append("")
 
     if result.new_other_topics:
@@ -300,9 +433,10 @@ def parse_ordre_del_dia(text: str) -> MeetingAnalysisResult:
     current_name: str | None = None
     current_summary_lines: list[str] = []
     current_conclusion: str = ""
+    current_projects: list[str] = []
 
     def flush_topic():
-        nonlocal current_name, current_summary_lines, current_conclusion
+        nonlocal current_name, current_summary_lines, current_conclusion, current_projects
         if current_name is not None:
             summary = ' '.join(s for s in current_summary_lines if s)
             updated_topics.append(
@@ -310,11 +444,13 @@ def parse_ordre_del_dia(text: str) -> MeetingAnalysisResult:
                     topic_name=current_name,
                     summary=summary,
                     conclusion=current_conclusion,
+                    projects=current_projects,
                 )
             )
         current_name = None
         current_summary_lines = []
         current_conclusion = ""
+        current_projects = []
 
     started = False
     for line in text.splitlines():
@@ -341,8 +477,11 @@ def parse_ordre_del_dia(text: str) -> MeetingAnalysisResult:
         content = re.sub(r'^[\*\-]\s+', '', stripped)
         if mode == 'topic':
             cm = re.match(r'^\**\s*Conclusió\s*:\s*\**\s*(.*)$', content, re.IGNORECASE)
+            pm = re.match(r'^\**\s*Projectes\s*:\s*\**\s*(.*)$', content, re.IGNORECASE)
             if cm:
                 current_conclusion = cm.group(1).strip().rstrip('*').strip()
+            elif pm:
+                current_projects = _parse_project_links(pm.group(1))
             else:
                 current_summary_lines.append(content)
         elif mode == 'altres':

@@ -297,20 +297,39 @@ class MeetingAnalyzerWorker(QThread):
     finished = Signal(object)
     error = Signal(str)
 
-    def __init__(self, analyzer, topics, transcript, parent=None, brief=False, summarize=False):
+    def __init__(self, analyzer, topics, transcript, parent=None, brief=False, summarize=False,
+                 obsidian=None, series_dir=None):
         super().__init__(parent)
         self.analyzer = analyzer
         self.topics = topics
         self.transcript = transcript
         self.brief = brief
         self.summarize = summarize
+        # Per etiquetar temes amb projectes: la llista es llegeix aquí (run),
+        # fora del fil de la GUI. series_dir = sèrie de la reunió (s'exclou).
+        self.obsidian = obsidian
+        self.series_dir = series_dir
+
+    def _load_projects(self) -> list:
+        """Projectes per a l'etiquetatge. Si la lectura falla, l'anàlisi es fa
+        igualment sense links (no ha de bloquejar el processat)."""
+        if self.obsidian is None:
+            return []
+        try:
+            return self.obsidian.list_projects(exclude=self.series_dir)
+        except Exception:
+            logger.exception("No s'ha pogut llegir la llista de projectes")
+            return []
 
     def run(self):
         try:
+            projects = self._load_projects()
             if self.summarize:
-                result = self.analyzer.summarize(self.transcript, brief=self.brief)
+                result = self.analyzer.summarize(self.transcript, brief=self.brief,
+                                                 projects=projects)
             else:
-                result = self.analyzer.analyze(self.topics, self.transcript, brief=self.brief)
+                result = self.analyzer.analyze(self.topics, self.transcript, brief=self.brief,
+                                               projects=projects)
             self.finished.emit(result)
         except Exception as e:
             logger.exception("MeetingAnalyzerWorker error")

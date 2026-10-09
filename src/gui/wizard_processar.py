@@ -356,7 +356,8 @@ class WizardProcessar(QDialog):
         analyzer = MeetingAnalyzer()
 
         self.worker_processing = MeetingAnalyzerWorker(
-            analyzer, topics, transcript, self, brief=brief
+            analyzer, topics, transcript, self, brief=brief,
+            obsidian=self.obsidian, series_dir=note['path'].parent.parent,
         )
         self.worker_processing.finished.connect(
             lambda r, i=idx: self._batch_on_seguiment_finished(i, r)
@@ -373,7 +374,8 @@ class WizardProcessar(QDialog):
         analyzer = MeetingAnalyzer()
 
         self.worker_processing = MeetingAnalyzerWorker(
-            analyzer, [], transcript, self, summarize=True
+            analyzer, [], transcript, self, summarize=True,
+            obsidian=self.obsidian, series_dir=note['path'].parent.parent,
         )
         self.worker_processing.finished.connect(
             lambda r, i=idx: self._batch_on_resum_finished(i, r)

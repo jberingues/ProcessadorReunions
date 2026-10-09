@@ -15,6 +15,11 @@ def series_name_for_file(folder_name: str) -> str:
     return folder_name.replace("_", " ").replace("[", "").replace("]", "")
 
 
+# Secció de la nota principal d'un projecte on la fase 2 afegeix les mencions
+# des d'altres sèries. La resta de la nota la manté l'usuari.
+MENTIONS_HEADING = "## Mencions des d'altres sèries"
+
+
 class ObsidianWriter:
     def __init__(self, vault_path):
         self.vault = Path(vault_path).expanduser()
@@ -511,15 +516,13 @@ from: "{thread['from']}"
         path.write_text(self.project_hub_content(series_dir), encoding='utf-8')
         return path
 
-    def ensure_project_hubs(self) -> list[Path]:
-        """Escombra Reunions/Projectes/ i crea les notes principals que falten.
-        Sèrie = cada carpeta directa de Projectes/ (encara que no tingui
-        Reunions/, e.g. acabada de copiar) + sub-sèries niu amb Reunions/.
-        Fa I/O sobre el vault: cridar-ho només des d'un worker."""
+    def _iter_project_series(self):
+        """Sèries de Reunions/Projectes/: cada carpeta directa (encara que no
+        tingui Reunions/, e.g. acabada de copiar) + sub-sèries niu amb Reunions/.
+        Salta plantilles `x…`, ocultes i subcarpetes estructurals."""
         root = self.vault / 'Reunions' / 'Projectes'
         if not root.is_dir():
-            return []
-        created = []
+            return
 
         def walk(d: Path):
             for sub in sorted(d.iterdir()):
@@ -527,13 +530,97 @@ from: "{thread['from']}"
                         or sub.name in self._HUB_STRUCTURAL_SUBFOLDERS):
                     continue
                 if d == root or (sub / 'Reunions').is_dir():
-                    path = self.ensure_project_hub(sub)
-                    if path:
-                        created.append(path)
-                    walk(sub)
+                    yield sub
+                    yield from walk(sub)
 
-        walk(root)
+        yield from walk(root)
+
+    def ensure_project_hubs(self) -> list[Path]:
+        """Escombra Reunions/Projectes/ i crea les notes principals que falten.
+        Fa I/O sobre el vault: cridar-ho només des d'un worker."""
+        created = []
+        for series_dir in self._iter_project_series():
+            path = self.ensure_project_hub(series_dir)
+            if path:
+                created.append(path)
         return created
+
+    def project_series_dir(self, name: str) -> Path | None:
+        """Carpeta de la sèrie de Projectes/ amb aquest nom (els noms de fulla
+        són únics al vault). None si no existeix."""
+        for series_dir in self._iter_project_series():
+            if series_dir.name == name:
+                return series_dir
+        return None
+
+    def append_project_mentions(self, project: str, lines: list[str]) -> Path | None:
+        """Afegeix línies de menció a la secció MENTIONS_HEADING de la nota
+        principal del projecte (la crea al final si falta; crea la nota si
+        falta). Només afegeix: no toca res més de la nota i salta les línies
+        que ja hi són (idempotent). Si l'usuari n'esborra una, no es torna a
+        escriure (només s'escriu en consolidar). None si el projecte no existeix."""
+        series_dir = self.project_series_dir(project)
+        if series_dir is None:
+            return None
+        self.ensure_project_hub(series_dir)
+        hub = series_dir / f'{series_dir.name}.md'
+        content_lines = hub.read_text(encoding='utf-8').rstrip('\n').split('\n')
+        existing = {l.strip() for l in content_lines}
+        new = [l for l in lines if l.strip() not in existing]
+        if not new:
+            return hub
+
+        if MENTIONS_HEADING in content_lines:
+            start = content_lines.index(MENTIONS_HEADING)
+            end = start + 1
+            while end < len(content_lines) and not content_lines[end].startswith('## '):
+                end += 1
+            # Insereix després de l'última línia no buida de la secció.
+            insert_at = end
+            while insert_at > start + 1 and not content_lines[insert_at - 1].strip():
+                insert_at -= 1
+            content_lines[insert_at:insert_at] = new
+        else:
+            content_lines += ['', MENTIONS_HEADING, *new]
+        hub.write_text('\n'.join(content_lines) + '\n', encoding='utf-8')
+        return hub
+
+    def list_projects(self, exclude=None) -> list[tuple[str, list[str]]]:
+        """[(nom, àlies)] de cada sèrie de Projectes/, amb els àlies del
+        frontmatter de la nota principal (`aliases:` llista o text). Per al
+        prompt d'etiquetatge de la fase 1. `exclude`: sèrie a ometre (la de la
+        reunió mateixa). Tolerant: sense nota/frontmatter → àlies buits.
+        Fa I/O sobre el vault: cridar-ho només des d'un worker."""
+        exclude = Path(exclude) if exclude else None
+        projects = []
+        for series_dir in self._iter_project_series():
+            if exclude and series_dir == exclude:
+                continue
+            projects.append((series_dir.name, self._read_hub_aliases(series_dir)))
+        return projects
+
+    @staticmethod
+    def _read_hub_aliases(series_dir: Path) -> list[str]:
+        path = series_dir / f'{series_dir.name}.md'
+        try:
+            content = path.read_text(encoding='utf-8')
+        except OSError:
+            return []
+        if not content.startswith('---'):
+            return []
+        end = content.find('\n---', 3)
+        if end == -1:
+            return []
+        try:
+            data = yaml.safe_load(content[3:end]) or {}
+        except yaml.YAMLError:
+            return []
+        aliases = data.get('aliases') if isinstance(data, dict) else None
+        if isinstance(aliases, str):
+            aliases = [aliases]
+        if not isinstance(aliases, list):
+            return []
+        return [str(a).strip() for a in aliases if a is not None and str(a).strip()]
 
     def read_attendees(self, note_path: Path) -> list[str]:
         """Llegeix els assistents del frontmatter d'una nota com a llista de noms.

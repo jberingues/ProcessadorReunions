@@ -144,6 +144,16 @@ Resum funcional; per a signatures exactes llegeix el mòdul. Es destaquen només
 - **Decoupling**: el processat **mai mira el path** — la decisió ve del selector (el path només és el default).
 - **Errors UI**: cel·la "Estat" mostra primera línia truncada a 60 chars; tooltip complet; traceback a `data/app.log`.
 
+## Links a projectes (temes creuats) — decisió 2026-10
+
+**Objectiu**: que tota decisió/informació sobre un projecte tractada en qualsevol reunió (qualitat, proveïdor, persona…) quedi accessible des del projecte. **Només projectes** (no persones/clients/proveïdors: l'usuari ho va descartar).
+
+- **Fase 1**: `MeetingAnalyzerWorker` llegeix dins del `run()` (no al fil de la GUI) `ObsidianWriter.list_projects(exclude=<sèrie de la reunió>)` → `[(nom, àlies)]` dels hubs de `Projectes/`. `analyze`/`summarize` reben `projects=` i hi afegeixen `projects_prompt_section` (criteri: el tema **decideix o informa** alguna cosa del projecte, encara que no l'anomeni; no mencions de passada). Camp `ActiveTopicUpdate.projects`; als "Altres temes" (text lliure) el link va inline al final. `normalize_projects` valida la sortida: àlies → nom canònic, descarta noms inexistents (un link inventat crearia una nota buida a Obsidian). Si llegir la llista falla, s'analitza sense links.
+- **Render**: línia `* **Projectes:** [[A]], [[B]]` després de la conclusió (Ordre del dia, Resum i bloc anual); `parse_ordre_del_dia` la recupera (`[[X|àlies]]`/`[[X#secció]]` → `X`) → l'usuari la valida/edita a la fase 1→2 com la resta. Sense la línia → `projects=[]` (compat enrere).
+- **Fase 2**: després d'escriure l'anual, `consolidator._write_project_mentions` → `build_project_mentions` (una línia per tema×projecte: `- **AAAA-MM-DD** · [[<anual>#<data> - <títol>|<sèrie>]] · *<tema>*: <conclusió o resum>`; heading sanejat de `[]#|^`) → `ObsidianWriter.append_project_mentions` a la secció `MENTIONS_HEADING` (`## Mencions des d'altres sèries`) del hub. **Només afegeix** (idempotent, salta línies existents; si l'usuari n'esborra una no es reescriu). La sèrie pròpia s'exclou. **Errors de mencions no aturen la consolidació** (l'anual ja és escrit; reintentar el duplicaria) → `mention_warnings`, visibles a la cel·la d'estat del wizard (tooltip).
+- **Correus**: sense links; si un fil afecta un projecte, posar-li també l'etiqueta Gmail del projecte (prioritat `Projectes` → s'arxiva al projecte).
+- **Prova empírica (2026-10-07)**: per a noms distintius (A10Pro) un agent troba igual la info per cerca de text; el valor dels links és la vista acumulada al hub i els temes que no anomenen el projecte. Per això el hub diu "cerca `[[X` **i** el nom/àlies en text pla".
+
 ## Wizard Consolidar — Flux (fase 2)
 
 1 pàgina (`wizard_consolidar.py`). Llista les notes `+` (`find_pending_consolidation_notes`); l'usuari selecciona i clica "Consolidar seleccionades". Per cada nota: `consolidate_pending_note` (a `consolidator.py`) llegeix l'`Ordre del dia` **ja validat per l'usuari a Obsidian**, el parseja (`parse_ordre_del_dia`) i propaga els resums segons el `kind` del frontmatter: **seguiment** → `Temes oberts.md` (bullets datats) + `<Any> <Subfolder>.md` (bloc anual); **resum** → només l'anual. Treu els marcadors de frontmatter de l'Ordre del dia i marca `*`. **Síncron** (sense LLM — és parse + escriptures).
