@@ -13,7 +13,6 @@ from wizard_correccio import WizardCorreccio
 from wizard_processar import WizardProcessar
 from wizard_consolidar import WizardConsolidar
 from wizard_processar_correus import WizardProcessarCorreus
-from wizard_nou_projecte import WizardNouProjecte
 from wizard_correus import WizardCorreus
 from wizard_fitxers import WizardFitxers
 from gmail_fetcher import GmailFetcher
@@ -119,13 +118,10 @@ class MainWindow(QMainWindow):
         self.btn_processar_correus.clicked.connect(self._open_processar_correus)
         actions.addWidget(self.btn_processar_correus)
 
-        self.btn_nou_projecte = QPushButton("Crear un projecte nou")
-        self.btn_nou_projecte.clicked.connect(self._open_nou_projecte)
-        actions.addWidget(self.btn_nou_projecte)
 
         layout.addLayout(actions)
 
-        self._all_buttons = [self.btn_transcripcions, self.btn_correus, self.btn_sync_labels, self.btn_fitxers, self.btn_correccio, self.btn_processar, self.btn_consolidar, self.btn_processar_correus, self.btn_nou_projecte]
+        self._all_buttons = [self.btn_transcripcions, self.btn_correus, self.btn_sync_labels, self.btn_fitxers, self.btn_correccio, self.btn_processar, self.btn_consolidar, self.btn_processar_correus]
 
         self._refresh_dashboard()
 
@@ -154,13 +150,6 @@ class MainWindow(QMainWindow):
         self._disable_all()
         wizard = WizardConsolidar(self.obsidian, self,
                                   preselected_paths={n['path'] for n in notes})
-        wizard.finished.connect(self._wizard_closed)
-        wizard.setWindowModality(Qt.ApplicationModal)
-        wizard.show()
-
-    def _open_nou_projecte(self):
-        self._disable_all()
-        wizard = WizardNouProjecte(self.calendar, self.obsidian, self)
         wizard.finished.connect(self._wizard_closed)
         wizard.setWindowModality(Qt.ApplicationModal)
         wizard.show()

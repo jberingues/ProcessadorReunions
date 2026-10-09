@@ -38,6 +38,17 @@ def _is_transient_network_error(exc: BaseException) -> bool:
     return False
 
 
+def _ensure_project_hubs(obsidian, log) -> None:
+    """Crea les notes principals `Projectes/<X>/<X>.md` que falten (escombrat
+    del vault). Es crida des dels workers de Gmail perquè ja recorren el vault
+    fora del fil de la GUI. Un error aquí no ha d'aturar l'arxivat/sync."""
+    try:
+        for path in obsidian.ensure_project_hubs():
+            log(f"Creada la nota principal del projecte: {path.name}")
+    except Exception:
+        logger.exception("Error creant notes principals de projecte")
+
+
 def _retry_on_network_error(fn, *, attempts=3, base_delay=0.6):
     """Executa fn() reintentant fins a `attempts` cops davant errors de xarxa
     transitoris, amb backoff lineal. Re-llança l'última excepció si s'esgoten
@@ -331,6 +342,8 @@ class GmailLabelSyncWorker(QThread):
     def run(self):
         try:
             from email_archiver import discover_vault_series, sync_gmail_labels
+            from obsidian_writer import ObsidianWriter
+            _ensure_project_hubs(ObsidianWriter(self.vault_path), self.log.emit)
             self.log.emit("Escanejant el vault...")
             discovery = discover_vault_series(self.vault_path, include_sincro=self.include_sincro)
             self.log.emit(
@@ -403,6 +416,7 @@ class EmailArchiveWorker(QThread):
             'errors': [],
         }
 
+        _ensure_project_hubs(self.obsidian, self.log.emit)
         self.log.emit("Escanejant el vault...")
         discovery = discover_vault_series(self.vault_path, include_sincro=self.include_sincro)
         self.log.emit(
@@ -503,26 +517,6 @@ class EmailArchiveWorker(QThread):
         self.progress.emit(total, total)
         self.log.emit("Acabat.")
         self.finished.emit(summary)
-
-
-class ProjectInitWorker(QThread):
-    finished = Signal(object)  # ProjectDefinition
-    error = Signal(str)
-
-    def __init__(self, project_name: str, sources: list, parent=None):
-        super().__init__(parent)
-        self.project_name = project_name
-        self.sources = sources
-
-    def run(self):
-        try:
-            from project_definition_extractor import ProjectDefinitionExtractor
-            extractor = ProjectDefinitionExtractor()
-            result = extractor.extract(self.project_name, self.sources)
-            self.finished.emit(result)
-        except Exception as e:
-            logger.exception("ProjectInitWorker error")
-            self.error.emit(str(e))
 
 
 class SummaryWorker(QThread):

@@ -21,12 +21,6 @@ class ObsidianWriter:
         if not self.vault.exists():
             raise FileNotFoundError(f"Vault no trobat: {self.vault}")
 
-    def find_subfolders(self, type_folder: str) -> list:
-        type_dir = self.vault / 'Reunions' / type_folder
-        if not type_dir.exists():
-            return []
-        return sorted([d.name for d in type_dir.iterdir() if d.is_dir() and not d.name.startswith('.')])
-
     def create_meeting_note(self, meeting, transcripcio, type_folder, sub_folder=None, subtype=None):
         path = self._gen_path(meeting, type_folder, sub_folder)
         content = self._gen_content(meeting, transcripcio, subtype)
@@ -463,6 +457,84 @@ from: "{thread['from']}"
             path.write_text("### Altres temes\n", encoding='utf-8')
         return path
 
+    # Subcarpetes d'una sèrie que mai són sub-sèries.
+    _HUB_STRUCTURAL_SUBFOLDERS = {'Reunions', 'Correus', 'Fitxers', 'Documentació'}
+
+    def _is_project_series(self, series_dir: Path) -> bool:
+        """Cert si series_dir és una sèrie dins de Reunions/Projectes/ (no la
+        carpeta de tipus mateixa ni una plantilla `x…`)."""
+        try:
+            rel = series_dir.relative_to(self.vault / 'Reunions' / 'Projectes')
+        except ValueError:
+            return False
+        parts = rel.parts
+        return bool(parts) and not any(p.startswith(('x', '.')) for p in parts)
+
+    @staticmethod
+    def project_hub_content(series_dir: Path) -> str:
+        """Contingut inicial de la nota principal d'un projecte. La secció
+        "On trobar la informació" només llista el que la carpeta té."""
+        name = series_dir.name
+        has = lambda n: (series_dir / n).exists()
+        where = [f"- **Històric de reunions:** fitxers anuals `<Any> {name}.md` d'aquesta carpeta"]
+        if has('Temes oberts.md'):
+            where.append("- **Temes en curs:** `Temes oberts.md`")
+        if has('Correus'):
+            where.append("- **Correus:** carpeta `Correus/`")
+        docs = [f'`{n}/`' for n in ('Fitxers', 'Documentació') if has(n)]
+        if docs:
+            where.append(f"- **Documents:** {', '.join(docs)}")
+        for sub in sorted(series_dir.iterdir()):
+            if (sub.is_dir() and sub.name not in ObsidianWriter._HUB_STRUCTURAL_SUBFOLDERS
+                    and (sub / 'Reunions').is_dir()):
+                where.append(f"- **Sub-sèrie:** [[{sub.name}]]")
+        where.append(
+            f"- **Mencions des d'altres sèries:** backlinks d'aquesta nota, o cerca a tot "
+            f"el vault de `[[{name}` i del nom i els àlies en text pla"
+        )
+        return (
+            f"---\ntype: hub\ntipus: projecte\naliases: []\n---\n# {name}\n\n"
+            f"## Resum\n*(pendent d’omplir)*\n\n"
+            f"## On trobar la informació\n" + '\n'.join(where) + '\n'
+        )
+
+    def ensure_project_hub(self, series_dir) -> Path | None:
+        """Crea la nota principal `<X>/<X>.md` d'una sèrie de Projectes/ si
+        falta (decisió 2026-10: només Projectes). Idempotent: mai sobreescriu.
+        Retorna el path si l'ha creada, None si no calia o no és un projecte."""
+        series_dir = Path(series_dir)
+        if not self._is_project_series(series_dir):
+            return None
+        path = series_dir / f'{series_dir.name}.md'
+        if path.exists():
+            return None
+        path.write_text(self.project_hub_content(series_dir), encoding='utf-8')
+        return path
+
+    def ensure_project_hubs(self) -> list[Path]:
+        """Escombra Reunions/Projectes/ i crea les notes principals que falten.
+        Sèrie = cada carpeta directa de Projectes/ (encara que no tingui
+        Reunions/, e.g. acabada de copiar) + sub-sèries niu amb Reunions/.
+        Fa I/O sobre el vault: cridar-ho només des d'un worker."""
+        root = self.vault / 'Reunions' / 'Projectes'
+        if not root.is_dir():
+            return []
+        created = []
+
+        def walk(d: Path):
+            for sub in sorted(d.iterdir()):
+                if (not sub.is_dir() or sub.name.startswith(('x', '.'))
+                        or sub.name in self._HUB_STRUCTURAL_SUBFOLDERS):
+                    continue
+                if d == root or (sub / 'Reunions').is_dir():
+                    path = self.ensure_project_hub(sub)
+                    if path:
+                        created.append(path)
+                    walk(sub)
+
+        walk(root)
+        return created
+
     def read_attendees(self, note_path: Path) -> list[str]:
         """Llegeix els assistents del frontmatter d'una nota com a llista de noms.
         Resol wikilinks [[Nom]] i cometes. Llista buida si no n'hi ha.
@@ -532,16 +604,6 @@ from: "{thread['from']}"
         new_path = path.with_stem(new_stem)
         path.rename(new_path)
         return new_path
-
-    def update_project_fields(self, note_path: Path, data_inici: str, resum: str):
-        content = note_path.read_text(encoding='utf-8')
-        content = re.sub(r'^Data inici:.*$', f'Data inici: {data_inici}', content, flags=re.MULTILINE)
-        content = re.sub(
-            r'## Resum\n[\s\S]*?\n---',
-            f'## Resum\n\n{resum}\n\n---',
-            content
-        )
-        note_path.write_text(content, encoding='utf-8')
 
     def _gen_content(self, m, t, subtype=None):
         data = m['start'].strftime('%Y-%m-%d')

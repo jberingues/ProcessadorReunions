@@ -473,6 +473,9 @@ class WizardTranscripcio(QDialog):
                 f"Error guardant la nota '{meeting.get('title', '')}'."
             )
             return
+        # Projecte nou (carpeta copiada de xProjecte): li creem la nota
+        # principal si encara no en té. selected_target_dir = <sèrie>/Reunions/.
+        self.obsidian.ensure_project_hub(Path(self.selected_target_dir).parent)
         self._advance_to_next_item()
 
     def _update_nav(self):

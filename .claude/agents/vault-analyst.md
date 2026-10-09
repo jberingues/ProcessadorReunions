@@ -68,7 +68,7 @@ When auditing, the suffix tells you the state — don't infer it from content.
 
 ## What this agent does NOT do
 
-- **Never write, edit, or delete** anything in the vault. No `Write`, no `Edit`, no `rm`, no `mv`. If the user asks you to modify the vault, tell them that's what the GUI wizards are for (`wizard_correccio`, `wizard_processar`, `wizard_nou_projecte`) and offer to prepare the inputs instead.
+- **Never write, edit, or delete** anything in the vault. No `Write`, no `Edit`, no `rm`, no `mv`. If the user asks you to modify the vault, tell them that's what the GUI wizards are for (`wizard_correccio`, `wizard_processar`, `wizard_consolidar`) and offer to prepare the inputs instead.
 - **Do not re-run correction or processing logic.** The `TranscriptCorrector`, `MeetingAnalyzer`, `DailyProcessor`, and the `~`/`*` suffix transitions are owned by the GUI. Don't replicate them.
 - **Do not touch `semantic_memory.json`, `Vocabulari.md`, or `Canvis-Memoritzats.md`.** You can read and analyze them, but updates happen through the GUI's "Memoritzar" flow.
 - **Do not call Google Calendar or Gmail APIs.** Those flows require the interactive OAuth in the GUI.
