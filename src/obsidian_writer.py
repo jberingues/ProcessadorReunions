@@ -695,8 +695,10 @@ from: "{thread['from']}"
     def _gen_content(self, m, t, subtype=None):
         data = m['start'].strftime('%Y-%m-%d')
         hora = m['start'].strftime('%H:%M')
-        atts = '\n'.join([f'  - "[[{a["name"]}]]"' for a in m['attendees']])
-        names = ', '.join([f"[[{a['name']}]]" for a in m['attendees']])
+        # Noms en text pla, sense [[ ]]: els links es reserven per a projectes
+        # (decisió 2026-10; els de persona només feien soroll al graf).
+        atts = '\n'.join([f'  - "{a["name"]}"' for a in m['attendees']])
+        names = ', '.join([a['name'] for a in m['attendees']])
         email_entries = [a for a in m['attendees'] if a.get('email')]
         speaker_emails_block = ''
         if email_entries:

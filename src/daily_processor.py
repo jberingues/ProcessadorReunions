@@ -83,7 +83,7 @@ INSTRUCCIONS:
         for p in result.participants:
             if not p.ahir and not p.avui:
                 continue
-            lines.append(f"##### [[{p.name}]]")
+            lines.append(f"##### {p.name}")  # sense link (decisió 2026-10)
             if p.ahir:
                 lines.append("**Ahir:**")
                 for item in p.ahir:
